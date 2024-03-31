@@ -1,14 +1,14 @@
 <DATAROOT>
   <DEVINFO>
     <DEV id="1" ip="1" area="аптека" name="Днепр40" host="10.132.161.130" port="37777" port2="0" cameras="8" devcType="1" alarmcameras="0" ddnsFlag="0" DDNSHost="" pos="0" desc="" username="admin" OrgId="1" vendor="2" SerialID="" link-mode="0" arspstatus="0" password="2E41A403A3D6D07944E4FFB1A5C504A3">
-      <DEV id="2" type="0" name="Днепр40_1" channel="0" desc=""/>
-      <DEV id="3" type="0" name="Днепр40_2" channel="1" desc=""/>
-      <DEV id="4" type="0" name="Днепр40_3" channel="2" desc=""/>
-      <DEV id="5" type="0" name="Днепр40_4" channel="3" desc=""/>
-      <DEV id="6" type="0" name="Днепр40_5" channel="4" desc=""/>
-      <DEV id="7" type="0" name="Днепр40_6" channel="5" desc=""/>
-      <DEV id="8" type="0" name="Днепр40_7" channel="6" desc=""/>
-      <DEV id="9" type="0" name="Днепр40_8" channel="7" desc=""/>
+      <DEV id="2" type="0" name="Аптека_1" channel="0" desc=""/>
+      <DEV id="3" type="0" name="Аптека_2" channel="1" desc=""/>
+      <DEV id="4" type="0" name="Аптека_3" channel="2" desc=""/>
+      <DEV id="5" type="0" name="Аптека_4" channel="3" desc=""/>
+      <DEV id="6" type="0" name="Аптека_5" channel="4" desc=""/>
+      <DEV id="7" type="0" name="Аптека_6" channel="5" desc=""/>
+      <DEV id="8" type="0" name="Аптека_7" channel="6" desc=""/>
+      <DEV id="9" type="0" name="Аптека_8" channel="7" desc=""/>
     </DEV>
   </DEVINFO>
   <IMGINFO/>
