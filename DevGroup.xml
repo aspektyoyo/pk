@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<DEVGROUP>
+    <GROUP name="Àïòåêà" groupID="1" parentID="0">
+        <DEVICE devID="1" />
+    </GROUP>
+    <GLOBAL index="2" />
+    <VERSION version="1" />
+</DEVGROUP>
