@@ -1,0 +1,78 @@
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Создание файла"
+$form.Size = New-Object System.Drawing.Size(400, 150)
+$form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+
+$createButton = New-Object System.Windows.Forms.Button
+$createButton.Text = "Начать создание файлов"
+$createButton.Location = New-Object System.Drawing.Point(10, 60)
+$createButton.Size = New-Object System.Drawing.Size(150, 30)
+$form.Controls.Add($createButton)
+
+$stopButton = New-Object System.Windows.Forms.Button
+$stopButton.Text = "Остановить"
+$stopButton.Location = New-Object System.Drawing.Point(180, 60)
+$stopButton.Size = New-Object System.Drawing.Size(100, 30)
+$stopButton.Enabled = $false
+$form.Controls.Add($stopButton)
+
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 1000
+
+function Get-RandomFileName {
+    $fileNameLength = Get-Random -Minimum 5 -Maximum 10
+    $fileName = -join ((65..90) + (97..122) | Get-Random -Count $fileNameLength | ForEach-Object {[char]$_})
+    $extensions = @(
+        ".txt", ".doc", ".pdf", ".jpg", ".png", ".exe", ".mp3", ".avi", ".mp4", ".mkv", ".zip", ".rar", ".tar", ".gz", ".7z",
+        ".html", ".css", ".js", ".json", ".xml", ".csv", ".xls", ".xlsx", ".ppt", ".pptx", ".docx", ".rtf", ".log", ".ini",
+        ".bat", ".cmd", ".sh", ".ps1", ".rb", ".py", ".java", ".class", ".cpp", ".h", ".cs", ".vb", ".swift", ".go", ".rs",
+        ".pl", ".php", ".asp", ".aspx", ".jsp", ".cgi", ".lua", ".sql", ".db", ".bak", ".ico", ".bmp", ".tiff", ".svg",
+        ".gif", ".woff", ".woff2", ".eot", ".ttf", ".otf", ".md", ".markdown", ".rst", ".adoc", ".tex", ".bib", ".dvi",
+        ".ps", ".eps", ".djvu", ".epub", ".mobi", ".azw3", ".lit", ".prc", ".cbr", ".cbz", ".cbt", ".cba", ".ogg", ".wav",
+        ".flac", ".aac", ".m4a", ".aiff", ".wma", ".mid", ".midi", ".mpg", ".mpeg", ".mov", ".qt", ".3gp", ".3g2", ".fla"
+    )
+    $extension = $extensions | Get-Random
+    return "$fileName$extension"
+}
+
+$timer.Add_Tick({
+    $allDrives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' }
+    foreach ($drive in $allDrives) {
+        try {
+            Get-ChildItem -Path $drive.RootDirectory.FullName -Recurse -Directory -ErrorAction Stop | ForEach-Object {
+                $subDirectory = $_.FullName
+                $fileName = Get-RandomFileName
+                $filePath = [System.IO.Path]::Combine($subDirectory, $fileName)
+                $fileSize = Get-Random -Minimum 1MB -Maximum 50MB
+
+                try {
+                    $fileStream = [System.IO.File]::Create($filePath)
+                    $fileStream.SetLength($fileSize)
+                    $fileStream.Close()
+                    Write-Host "Создан файл: $filePath размером $fileSize байт"
+                } catch {
+                    Write-Host "Произошла ошибка при создании файла в '$subDirectory': $_"
+                }
+            }
+        } catch {
+            Write-Host "Произошла ошибка при обработке директории '$($drive.RootDirectory.FullName)': $_"
+        }
+    }
+})
+
+$createButton.Add_Click({
+    $timer.Start()
+    $createButton.Enabled = $false
+    $stopButton.Enabled = $true
+})
+
+$stopButton.Add_Click({
+    $timer.Stop()
+    $createButton.Enabled = $true
+    $stopButton.Enabled = $false
+})
+
+$form.ShowDialog()
