@@ -26,6 +26,3 @@ add action=accept chain=forward comment="" connection-nat-state=dstnat connectio
     established,related,new
 add action=drop chain=forward comment="" connection-state=invalid,new
 add action=drop chain=forward comment="" connection-state=new
-/
-/import file-name=fi.rsc
-/file/remove fi.rsc 
