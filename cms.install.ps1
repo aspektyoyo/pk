@@ -184,7 +184,7 @@ foreach ($folder in $PATHS_TO_DELETE) {
 }
 
 Write-Host "`nУстановка CMS..." -ForegroundColor Cyan
-if (Download-File -URL $SETUP_URL -OutFile $SETUP_FILE -Description "установщика CMS") {
+if (Download-File -URL $SETUP_URL -OutFile $SETUP_FILE -Description "установщик CMS") {
     try {
         $proc = Start-Process -FilePath $SETUP_FILE -ArgumentList "/SILENT" -Wait -PassThru -WindowStyle Hidden
         if ($proc.ExitCode -eq 0) {
