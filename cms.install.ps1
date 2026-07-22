@@ -292,12 +292,19 @@ Write-Status "✓" "CMS установлена" "" "Green"
 # ШАГ 4: Применение конфигурации из D:\ в XML_DIR
 # ============================================================================
 
-$localDestination = "C:\Program Files (x86)\Polyvision\CMS\XML"
+$configDestinations = @(
+    "C:\Program Files (x86)\Polyvision\CMS\XML",
+    "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
+)
+
 if (Test-Path "D:\Data.xml") {
-    foreach ($file in $FILES_TO_COPY) {
-        $intermediateFile = "D:\$file"
-        if (Test-Path $intermediateFile) {
-            Copy-Item -Path $intermediateFile -Destination $localDestination -Force -ErrorAction SilentlyContinue
+    foreach ($dest in $configDestinations) {
+        Ensure-Directory $dest
+        foreach ($file in $FILES_TO_COPY) {
+            $intermediateFile = "D:\$file"
+            if (Test-Path $intermediateFile) {
+                Copy-Item -Path $intermediateFile -Destination $dest -Force -ErrorAction SilentlyContinue
+            }
         }
     }
     Write-Status "✓" "Конфигурация применена" "" "Green"
