@@ -110,13 +110,17 @@ function Remove-AllShortcuts {
 }
 
 function Reset-IconCache {
-    $iconCachePath = "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
-    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
-    Get-ChildItem "$iconCachePath\iconcache*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-    Get-ChildItem "$iconCachePath\thumbcache*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-    Start-Process explorer
-    Start-Sleep -Milliseconds 800
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Shell32 {
+    [DllImport("shell32.dll")]
+    public static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);
+}
+"@ -ErrorAction SilentlyContinue
+    try {
+        [Shell32]::SHChangeNotify(0x08000000, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero)
+    } catch { }
 }
 
 function Copy-XMLFromPaths {
