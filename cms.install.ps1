@@ -20,8 +20,8 @@ $CMS_PATH    = "C:\Program Files (x86)\Polyvision\CMS"
 $SETUP_URL   = "https://github.com/aspektyoyo/pk/raw/main/Setup.exe"
 $ICON_URL    = "https://raw.githubusercontent.com/aspektyoyo/pk/refs/heads/main/camera.ico"
 
-$DOWNLOADS_DIR = "C:\Users\kassir\Downloads"
-$DESKTOP_DIR   = "C:\Users\kassir\Desktop"
+$DOWNLOADS_DIR  = "C:\Users\kassir\Downloads"
+$DESKTOP_DIR    = "C:\Users\kassir\Desktop"
 $PUBLIC_DESKTOP = "C:\Users\Public\Desktop"
 
 $SETUP_FILE    = Join-Path $DOWNLOADS_DIR "Setup.exe"
@@ -171,9 +171,9 @@ $configSource = ""
 
 # Локальные пути поиска (в порядке приоритета)
 $localSearchPaths = [ordered]@{
-    "локально (Polyvision)"      = "C:\Program Files (x86)\Polyvision\CMS\XML"
-    "локально (CMS)"             = "C:\Program Files (x86)\CMS\XML"
-    "локально (VirtualStore)"    = "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
+    "локально (Polyvision)"   = "C:\Program Files (x86)\Polyvision\CMS\XML"
+    "локально (CMS)"          = "C:\Program Files (x86)\CMS\XML"
+    "локально (VirtualStore)" = "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
 }
 
 foreach ($entry in $localSearchPaths.GetEnumerator()) {
@@ -340,6 +340,18 @@ if ($iconExists -and (Test-Path $ICON_FILE)) {
 
 Create-Shortcut -TargetPath $BAT_FILE -ShortcutPath $SHORTCUT_FILE -IconPath $iconParam | Out-Null
 Write-Status "✓" "Ярлык КАМЕРЫ.lnk" "создан" "Green"
+
+# ============================================================================
+# ШАГ 9: Очистка временных файлов на D:\
+# ============================================================================
+
+foreach ($file in $FILES_TO_COPY) {
+    $tempFile = "D:\$file"
+    if (Test-Path $tempFile) {
+        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-Status "✓" "Временные файлы на D:\" "удалены" "Green"
 
 # ============================================================================
 # ГОТОВО
