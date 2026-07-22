@@ -109,7 +109,6 @@ function Copy-RemoteXMLFiles {
     }
     
     if (-not $remotePath) {
-        Write-Host "✗ XML папки не найдены на $RemoteIP" -ForegroundColor Yellow
         return $false
     }
     
@@ -119,15 +118,11 @@ function Copy-RemoteXMLFiles {
         if (Test-Path $remoteFile) {
             try {
                 Copy-Item -Path $remoteFile -Destination $XML_DIR -ErrorAction Stop
-                Write-Host "✓ Скопирован $file с $RemoteIP" -ForegroundColor Green
                 $successCount++
             }
             catch {
-                Write-Host "✗ Ошибка копирования $file : $($_)" -ForegroundColor Yellow
+                # молча пропускаем
             }
-        }
-        else {
-            Write-Host "⚠ $file не найден на $RemoteIP" -ForegroundColor Gray
         }
     }
     
@@ -231,18 +226,18 @@ else {
     foreach ($ip in $ipAddresses) {
         try {
             if (Copy-RemoteXMLFiles -RemoteIP $ip) {
-                Write-Host "`n✓ Файлы успешно скопированы с $ip" -ForegroundColor Green
+                Write-Host "✓ Файлы конфигурации скопированы" -ForegroundColor Green
                 $copied = $true
                 break
             }
         }
         catch {
-            Write-Host "⚠ Недоступен $ip, пропускаем" -ForegroundColor Gray
+            # молча пропускаем недоступные устройства
         }
     }
     
     if (-not $copied) {
-        Write-Host "✗ Не удалось скопировать XML файлы ни с одного устройства" -ForegroundColor Red
+        Write-Host "✗ Не удалось найти файлы конфигурации" -ForegroundColor Red
     }
 }
 
