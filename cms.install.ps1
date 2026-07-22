@@ -131,13 +131,13 @@ function Copy-XMLToIntermediate {
         [string[]]$FilesToCopy
     )
     $dataXmlFound = $false
-    
+
     if (-not (Test-Path $SourceFolder -PathType Container)) {
         return $false
     }
-    
+
     Ensure-Directory $DestinationFolder
-    
+
     foreach ($file in $FilesToCopy) {
         $sourceFile = Join-Path $SourceFolder $file
         if (Test-Path $sourceFile) {
@@ -148,7 +148,7 @@ function Copy-XMLToIntermediate {
             catch { }
         }
     }
-    
+
     return $dataXmlFound
 }
 
@@ -169,19 +169,18 @@ Write-Host ""
 $configFound = $false
 $configSource = ""
 
-# Локальный поиск - Polyvision
-$localFolderPathPolyvision = "C:\Program Files (x86)\Polyvision\CMS\XML"
-if (Copy-XMLToIntermediate -SourceFolder $localFolderPathPolyvision -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
-    $configFound = $true
-    $configSource = "локально (Polyvision)"
+# Локальные пути поиска (в порядке приоритета)
+$localSearchPaths = [ordered]@{
+    "локально (Polyvision)"      = "C:\Program Files (x86)\Polyvision\CMS\XML"
+    "локально (CMS)"             = "C:\Program Files (x86)\CMS\XML"
+    "локально (VirtualStore)"    = "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
 }
 
-# Локальный поиск - CMS
-if (-not $configFound) {
-    $localFolderPathCMS = "C:\Program Files (x86)\CMS\XML"
-    if (Copy-XMLToIntermediate -SourceFolder $localFolderPathCMS -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
+foreach ($entry in $localSearchPaths.GetEnumerator()) {
+    if (Copy-XMLToIntermediate -SourceFolder $entry.Value -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
         $configFound = $true
-        $configSource = "локально (CMS)"
+        $configSource = $entry.Key
+        break
     }
 }
 
@@ -193,21 +192,21 @@ if (-not $configFound) {
 
     foreach ($ip in $ipAddresses) {
         try {
-            # Сетевой поиск - Polyvision
-            $remoteFolderPathPolyvision = "\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML"
-            if (Copy-XMLToIntermediate -SourceFolder $remoteFolderPathPolyvision -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
-                $configFound = $true
-                $configSource = "по сети ($ip) - Polyvision"
-                break
+            $remoteSearchPaths = [ordered]@{
+                "по сети ($ip) - Polyvision"   = "\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML"
+                "по сети ($ip) - CMS"          = "\\$ip\C`$\Program Files (x86)\CMS\XML"
+                "по сети ($ip) - VirtualStore" = "\\$ip\C`$\Users\Kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
             }
-            
-            # Сетевой поиск - CMS
-            $remoteFolderPathCMS = "\\$ip\C`$\Program Files (x86)\CMS\XML"
-            if (Copy-XMLToIntermediate -SourceFolder $remoteFolderPathCMS -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
-                $configFound = $true
-                $configSource = "по сети ($ip) - CMS"
-                break
+
+            foreach ($entry in $remoteSearchPaths.GetEnumerator()) {
+                if (Copy-XMLToIntermediate -SourceFolder $entry.Value -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
+                    $configFound = $true
+                    $configSource = $entry.Key
+                    break
+                }
             }
+
+            if ($configFound) { break }
         }
         catch { }
     }
