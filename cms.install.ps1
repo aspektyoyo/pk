@@ -30,6 +30,7 @@ $BAT_FILE      = Join-Path $CMS_PATH "CMS.bat"
 $SHORTCUT_FILE = Join-Path $DESKTOP_DIR "КАМЕРЫ.lnk"
 
 $XML_DIR       = Join-Path $CMS_PATH "XML"
+$D_DRIVE_DEST  = "D:\"
 $FILES_TO_COPY = @("Data.xml", "DevGroup.xml", "PlanTemplate.xml", "users.xml")
 
 # ============================================================================
@@ -123,24 +124,32 @@ public class Shell32 {
     } catch { }
 }
 
-function Copy-XMLFromPaths {
-    param([string[]]$Paths)
-    $successCount = 0
-    foreach ($path in $Paths) {
-        if (Test-Path $path -PathType Container) {
-            foreach ($file in $FILES_TO_COPY) {
-                $srcFile = Join-Path $path $file
-                if (Test-Path $srcFile) {
-                    try {
-                        Copy-Item -Path $srcFile -Destination "D:\" -Force -ErrorAction Stop
-                        $successCount++
-                    }
-                    catch { }
-                }
+function Copy-XMLToIntermediate {
+    param(
+        [string]$SourceFolder,
+        [string]$DestinationFolder,
+        [string[]]$FilesToCopy
+    )
+    $dataXmlFound = $false
+    
+    if (-not (Test-Path $SourceFolder -PathType Container)) {
+        return $false
+    }
+    
+    Ensure-Directory $DestinationFolder
+    
+    foreach ($file in $FilesToCopy) {
+        $sourceFile = Join-Path $SourceFolder $file
+        if (Test-Path $sourceFile) {
+            try {
+                Copy-Item -Path $sourceFile -Destination $DestinationFolder -Force -ErrorAction Stop
+                if ($file -eq "Data.xml") { $dataXmlFound = $true }
             }
+            catch { }
         }
     }
-    return $successCount -gt 0
+    
+    return $dataXmlFound
 }
 
 # ============================================================================
@@ -154,20 +163,29 @@ Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━
 Write-Host ""
 
 # ============================================================================
-# ШАГ 1: Поиск и сохранение конфигурации
+# ШАГ 1: Поиск и сохранение конфигурации на D:\
 # ============================================================================
 
 $configFound = $false
+$configSource = ""
 
-$localPaths = @(
-    "C:\Program Files (x86)\Polyvision\CMS\XML",
-    "C:\Program Files (x86)\CMS\XML"
-)
-if (Copy-XMLFromPaths -Paths $localPaths) {
+# Локальный поиск - Polyvision
+$localFolderPathPolyvision = "C:\Program Files (x86)\Polyvision\CMS\XML"
+if (Copy-XMLToIntermediate -SourceFolder $localFolderPathPolyvision -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
     $configFound = $true
-    $configSource = "локально"
+    $configSource = "локально (Polyvision)"
 }
 
+# Локальный поиск - CMS
+if (-not $configFound) {
+    $localFolderPathCMS = "C:\Program Files (x86)\CMS\XML"
+    if (Copy-XMLToIntermediate -SourceFolder $localFolderPathCMS -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
+        $configFound = $true
+        $configSource = "локально (CMS)"
+    }
+}
+
+# Сетевой поиск
 if (-not $configFound) {
     $ipAddresses = Get-NetNeighbor -State Reachable,Stale,Delay,Probe -ErrorAction SilentlyContinue |
                    Where-Object { $_.IPAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } |
@@ -175,13 +193,19 @@ if (-not $configFound) {
 
     foreach ($ip in $ipAddresses) {
         try {
-            $remotePaths = @(
-                "\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML",
-                "\\$ip\C`$\Program Files (x86)\CMS\XML"
-            )
-            if (Copy-XMLFromPaths -Paths $remotePaths) {
+            # Сетевой поиск - Polyvision
+            $remoteFolderPathPolyvision = "\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML"
+            if (Copy-XMLToIntermediate -SourceFolder $remoteFolderPathPolyvision -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
                 $configFound = $true
-                $configSource = "по сети ($ip)"
+                $configSource = "по сети ($ip) - Polyvision"
+                break
+            }
+            
+            # Сетевой поиск - CMS
+            $remoteFolderPathCMS = "\\$ip\C`$\Program Files (x86)\CMS\XML"
+            if (Copy-XMLToIntermediate -SourceFolder $remoteFolderPathCMS -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
+                $configFound = $true
+                $configSource = "по сети ($ip) - CMS"
                 break
             }
         }
@@ -266,16 +290,16 @@ Ensure-Directory $XML_DIR
 Write-Status "✓" "CMS установлена" "" "Green"
 
 # ============================================================================
-# ШАГ 4: Применение конфигурации из D:\
+# ШАГ 4: Применение конфигурации из D:\ в XML_DIR
 # ============================================================================
 
-$configOnD = $true
-foreach ($file in $FILES_TO_COPY) {
-    if (-not (Test-Path "D:\$file")) { $configOnD = $false; break }
-}
-if ($configOnD) {
+$localDestination = "C:\Program Files (x86)\Polyvision\CMS\XML"
+if (Test-Path "D:\Data.xml") {
     foreach ($file in $FILES_TO_COPY) {
-        Copy-Item -Path "D:\$file" -Destination $XML_DIR -Force -ErrorAction SilentlyContinue
+        $intermediateFile = "D:\$file"
+        if (Test-Path $intermediateFile) {
+            Copy-Item -Path $intermediateFile -Destination $localDestination -Force -ErrorAction SilentlyContinue
+        }
     }
     Write-Status "✓" "Конфигурация применена" "" "Green"
 }
@@ -292,7 +316,6 @@ Write-Status "✓" "BAT-файл создан" "" "Green"
 # ШАГ 6: Загрузка иконки
 # ============================================================================
 
-# Удаляем старый файл иконки чтобы скачать свежий
 if (Test-Path $ICON_FILE) {
     Remove-Item $ICON_FILE -Force -ErrorAction SilentlyContinue
 }
