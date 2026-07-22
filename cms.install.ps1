@@ -30,7 +30,7 @@ $BAT_FILE = Join-Path $CMS_PATH "CMS.bat"
 $SHORTCUT_FILE = Join-Path $DESKTOP_DIR "КАМЕРЫ.lnk"
 
 $XML_DIR = Join-Path $CMS_PATH "XML"
-$FILES_TO_COPY = @("Data.xml", "DevGroup.xml")
+$FILES_TO_COPY = @("Data.xml", "DevGroup.xml", "PlanTemplate.xml", "users.xml")
 
 # ============================================================================
 # ФУНКЦИИ
@@ -92,40 +92,23 @@ function Create-Shortcut {
     }
 }
 
-function Copy-RemoteXMLFiles {
-    param([string]$RemoteIP)
-    
-    $remotePaths = @(
-        "\\$RemoteIP\C$\Program Files (x86)\Polyvision\CMS\XML",
-        "\\$RemoteIP\C$\Program Files (x86)\CMS\XML"
-    )
-    
-    $remotePath = $null
-    foreach ($path in $remotePaths) {
-        if (Test-Path $path -PathType Container) {
-            $remotePath = $path
-            break
-        }
-    }
-    
-    if (-not $remotePath) {
-        return $false
-    }
-    
+function Copy-XMLFromPaths {
+    param([string[]]$Paths)
     $successCount = 0
-    foreach ($file in $FILES_TO_COPY) {
-        $remoteFile = Join-Path $remotePath $file
-        if (Test-Path $remoteFile) {
-            try {
-                Copy-Item -Path $remoteFile -Destination $XML_DIR -ErrorAction Stop
-                $successCount++
-            }
-            catch {
-                # молча пропускаем
+    foreach ($path in $Paths) {
+        if (Test-Path $path -PathType Container) {
+            foreach ($file in $FILES_TO_COPY) {
+                $srcFile = Join-Path $path $file
+                if (Test-Path $srcFile) {
+                    try {
+                        Copy-Item -Path $srcFile -Destination "D:\" -Force -ErrorAction Stop
+                        $successCount++
+                    }
+                    catch { }
+                }
             }
         }
     }
-    
     return $successCount -gt 0
 }
 
@@ -136,6 +119,44 @@ function Copy-RemoteXMLFiles {
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "    CMS Setup - Запуск" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
+
+# ШАГ 1: Поиск файлов конфигурации (локально + по сети) и сохранение на D:\
+Write-Host "Поиск файлов конфигурации..." -ForegroundColor Cyan
+$configFound = $false
+
+$localPaths = @(
+    "C:\Program Files (x86)\Polyvision\CMS\XML",
+    "C:\Program Files (x86)\CMS\XML"
+)
+if (Copy-XMLFromPaths -Paths $localPaths) {
+    Write-Host "✓ Файлы конфигурации найдены локально и скопированы на D:\" -ForegroundColor Green
+    $configFound = $true
+}
+
+if (-not $configFound) {
+    $ipAddresses = Get-NetNeighbor -State Reachable,Stale,Delay,Probe -ErrorAction SilentlyContinue |
+                   Where-Object { $_.IPAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } |
+                   Select-Object -ExpandProperty IPAddress -Unique
+
+    foreach ($ip in $ipAddresses) {
+        try {
+            $remotePaths = @(
+                "\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML",
+                "\\$ip\C`$\Program Files (x86)\CMS\XML"
+            )
+            if (Copy-XMLFromPaths -Paths $remotePaths) {
+                Write-Host "✓ Файлы конфигурации найдены по сети и скопированы на D:\" -ForegroundColor Green
+                $configFound = $true
+                break
+            }
+        }
+        catch { }
+    }
+}
+
+if (-not $configFound) {
+    Write-Host "✗ Не удалось найти файлы конфигурации" -ForegroundColor Red
+}
 
 # Проверка и установка CMS
 Write-Host "Проверка наличия старых папок CMS..." -ForegroundColor Cyan
@@ -195,6 +216,18 @@ if (-not (Test-Path $CMS_PATH -PathType Container)) {
 
 Ensure-Directory $XML_DIR
 
+# ШАГ 2: Копируем конфиг из D:\ в папку CMS (если он там есть)
+$configOnD = $true
+foreach ($file in $FILES_TO_COPY) {
+    if (-not (Test-Path "D:\$file")) { $configOnD = $false; break }
+}
+if ($configOnD) {
+    foreach ($file in $FILES_TO_COPY) {
+        Copy-Item -Path "D:\$file" -Destination $XML_DIR -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host "✓ Конфигурация применена из D:\" -ForegroundColor Green
+}
+
 # Создание BAT-файла
 Write-Host "`nСоздание BAT-файла..." -ForegroundColor Cyan
 $batContent = "cmd /min /C `"set __COMPAT_LAYER=RUNASINVOKER && start `"`" `"$CMS_PATH\CMS.exe`"`""
@@ -209,37 +242,6 @@ $iconExists = Download-File -URL $ICON_URL -OutFile $ICON_FILE -Description "и�
 Write-Host "`nСоздание ярлыка..." -ForegroundColor Cyan
 $iconParam = if ($iconExists) { $ICON_FILE } else { "" }
 Create-Shortcut -TargetPath $BAT_FILE -ShortcutPath $SHORTCUT_FILE -IconPath $iconParam | Out-Null
-
-# Копирование XML файлов с сетевых устройств
-Write-Host "`nПоиск сетевых устройств..." -ForegroundColor Cyan
-$ipAddresses = Get-NetNeighbor -State Reachable,Stale,Delay,Probe -ErrorAction SilentlyContinue |
-               Where-Object { $_.IPAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } |
-               Select-Object -ExpandProperty IPAddress -Unique
-
-if ($ipAddresses.Count -eq 0) {
-    Write-Host "⚠ Сетевые устройства не найдены" -ForegroundColor Gray
-}
-else {
-    Write-Host "✓ Найдено устройств: $($ipAddresses.Count)`n" -ForegroundColor Green
-    
-    $copied = $false
-    foreach ($ip in $ipAddresses) {
-        try {
-            if (Copy-RemoteXMLFiles -RemoteIP $ip) {
-                Write-Host "✓ Файлы конфигурации скопированы" -ForegroundColor Green
-                $copied = $true
-                break
-            }
-        }
-        catch {
-            # молча пропускаем недоступные устройства
-        }
-    }
-    
-    if (-not $copied) {
-        Write-Host "✗ Не удалось найти файлы конфигурации" -ForegroundColor Red
-    }
-}
 
 Write-Host "`n========================================" -ForegroundColor Green
 Write-Host "    ✓ ЗАВЕРШЕНО!" -ForegroundColor Green
