@@ -1,117 +1,129 @@
-# ============================================================================
-# CMS Setup Script
-# ============================================================================
+# Установка видео в аптеке. Тип регистратора определяется по адресу шлюз + .130:
+#   TCP 37777 (Dahua)  -> SmartPSS: тихая установка, без Storage Service, автовход, регистратор, все каналы
+#   TCP 34567 (CMS)    -> прежний сценарий CMS
+#
+# Запуск:
+#   irm https://raw.githubusercontent.com/aspektyoyo/pk/main/cms.install.ps1 | iex
+#
+# Установщик SmartPSS (DH_SmartPSS*.exe, любая версия) должен лежать
+# на ПК аптеки: в корне D:\ или в D:\LPROG\Видеонаблюдение. Другой путь:
+#   $env:PK_SMARTPSS_INSTALLER = 'E:\soft\DH_SmartPSS....exe'; irm ... | iex
+#
 
-function Test-AdminRights {
-    $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-    return $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
+& {
+    $ErrorActionPreference = 'Stop'
+    $ScriptUrl = 'https://raw.githubusercontent.com/aspektyoyo/pk/main/cms.install.ps1'
+    $ICON_URL = 'https://raw.githubusercontent.com/aspektyoyo/pk/refs/heads/main/camera.ico'
+    $SmartPSSConfigDirectory = 'C:\Users\Public\SmartPSS'
+    # Any installer version is allowed; components and config format were inspected only for this build.
+    $SmartPSSInstallerName = 'DH_SmartPSS_International_Win32_IS_V2.02.1.R.180619.exe'
+    $SmartPSSInstaller = $env:PK_SMARTPSS_INSTALLER
+    $RecorderName = 'Видеорегистратор'
 
-if (-not (Test-AdminRights)) {
-    Write-Host "  ✗  Запустите скрипт от имени администратора." -ForegroundColor Red
-    Pause
-    exit 1
-}
-
-# ============================================================================
-# КОНФИГУРАЦИЯ
-# ============================================================================
-$CMS_PATH    = "C:\Program Files (x86)\Polyvision\CMS"
-$SETUP_URL   = "https://github.com/aspektyoyo/pk/raw/main/Setup.exe"
-$ICON_URL    = "https://raw.githubusercontent.com/aspektyoyo/pk/refs/heads/main/camera.ico"
-
-$DOWNLOADS_DIR  = "C:\Users\kassir\Downloads"
-$DESKTOP_DIR    = "C:\Users\kassir\Desktop"
-$PUBLIC_DESKTOP = "C:\Users\Public\Desktop"
-
-$SETUP_FILE    = Join-Path $DOWNLOADS_DIR "Setup.exe"
-$ICON_FILE     = Join-Path $DOWNLOADS_DIR "camera.ico"
-$BAT_FILE      = Join-Path $CMS_PATH "CMS.bat"
-$SHORTCUT_FILE = Join-Path $DESKTOP_DIR "КАМЕРЫ.lnk"
-
-$XML_DIR       = Join-Path $CMS_PATH "XML"
-$D_DRIVE_DEST  = "D:\"
-$FILES_TO_COPY = @("Data.xml", "DevGroup.xml", "PlanTemplate.xml", "users.xml")
-
-# ============================================================================
-# ФУНКЦИИ
-# ============================================================================
-
-function Write-Status {
-    param(
-        [string]$Icon,
-        [string]$Label,
-        [string]$Value = "",
-        [string]$Color = "Gray"
-    )
-    $line = "  $Icon  $Label"
-    if ($Value) { $line += "  $Value" }
-    Write-Host $line -ForegroundColor $Color
-}
-
-function Ensure-Directory {
-    param([string]$Path)
-    if (-not (Test-Path $Path)) {
-        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    # Login and Organization must come from the same SmartPSS installation:
+    # device credentials are encrypted differently for another local account/ID.
+    # BEGIN EMBEDDED TEMPLATES
+    $EmbeddedTemplates = @{
+        'Login\conf.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIj8+CjxVc2VySW5mbyB2ZXJzaW9uPSIyLjAiPgoJPEN1ck1heElkIHZhbHVlPSIxIiAvPgoJPFVzZXJzPgoJCTxVc2VyIGlkPSIxIiBuYW1lPSJhZG1pbiIgcHdkPSJFZjJDVjhmWkZoRGtqQmtBdmh4WkZQaEhGVmFXWnF3QVFFaU5Ld1JGamNWWWRmM21YRWpmeUxJNEhiZFNJcllobjl6VHd2RG95Z2ZQalBVcFJJdEJQd3FLa2hXaElnTjYiIHR5cGU9IjAiIHJvbGVJZD0iMSIgZGVzYz0iYWRtaW4gdXNlciIgcmlnaHQ9IjIxNDc0ODM2NDciIENoZWNrPSJnRktQdzZNZnhlVFNIVG1Tb1NzYm52VHFicDZZYzQxODhSV1dDMmdTQ1hsd1NJRnpBYTc3aEZTVjBZQi9PZUZkdlVBUFo1MDhQMHNtc1FucVdmK0trcFBoWGhSRkkyeXEiIC8+Cgk8L1VzZXJzPgo8L1VzZXJJbmZvPgo='
+        'Login\role.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIj8+CjxSb2xlSW5mbyB2ZXJzaW9uPSIxLjAiPgoJPEN1ck1heElkIHZhbHVlPSIxIiAvPgoJPFJvbGVzPgoJCTxSb2xlIGlkPSIxIiBuYW1lPSJhZG1pbiIgdHlwZT0iMCIgZGVzYz0iYWRtaW4gcm9sZSIgcmlnaHQ9IjIxNDc0ODM2NDciIC8+Cgk8L1JvbGVzPgo8L1JvbGVJbmZvPgo='
+        'Login\code.dat' = 'JfgHzktaliQOVbszRjmhZ5mjuxE='
+        'Login\ClientConfig.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPENsaWVudENvbmZpZz4KICAgIDxOb2RlIGlkPSIwIiBjaGVjaz0iZGZqSE5CSHI3SytEUW9uK3FBUE9pSHN2UlRrTEJCZDFDWTEzOFFXRWh3VmcweXNGdXJjbERrNEQreW9RNDZ2ck9QN3g5VHJ0ZmFYcm8yL2Ntb0Ewd2RKWFhPVTFPUXpXIi8+CiAgICA8Tm9kZSBpZD0iMTAiIGNoZWNrPSIwRWZmc294QW1lRGhXRWZWMVJ3Zng3TzV5YnFpdlo3aGdmT0IzaFRMaXM4clFadDBmcXJ3T25ZSS9TZHRFelIxZUVoZGJGVWdicWt6dGhFWlFKa3pNNkxkMUZ3eXJGVWsiLz4KICAgIDxOb2RlIGlkPSIyMCIgY2hlY2s9InB6SnBnOU5WTzhtMWVEanZJaWhwMW5IRkM4NUIwVkNiWkpkWmhMOTMwdHNTT3JhYklNN0tZSFNCeEp4VHArM2R1dEw0KzQrc0krM0pFR2hDcVZYYVJVakZPQ1A3Zk93cCIvPgo8L0NsaWVudENvbmZpZz4K'
+        'Login\loginconfig.ini' = 'UW5WSk9LRkovRUtLZmFPRlJBSFo5SHBOc0pnSDBPUnVSeHNXVjdGZzN4ZU1ITGdBU1FmL1hDYnJxLzROanQxZFc1TnpaNXVYSVYwSzFoMDg='
+        'Organization\Organization.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPE9yZ2FuaXphdGlvbiB2ZXJzaW9uPSIxLjAiPgoJPEdyb3VwPk9yZ2FuaXphdGlvbkdyb3VwLnhtbDwvR3JvdXA+Cgk8UmVnaW9uPk9yZ2FuaXphdGlvblJlZ2lvbi54bWw8L1JlZ2lvbj4KCTxEZXZpY2U+T3JnYW5pemF0aW9uRGV2aWNlLnhtbDwvRGV2aWNlPgoJPENoYW5uZWw+T3JnYW5pemF0aW9uQ2hhbm5lbC54bWw8L0NoYW5uZWw+Cgk8RW1hcD5Pcmdhbml6YXRpb25FbWFwLnhtbDwvRW1hcD4KPC9Pcmdhbml6YXRpb24+Cg=='
+        'Organization\OrganizationDevice.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPE9yZ2FuaXphdGlvbkRldmljZSB2ZXJzaW9uPSIyLjAiIGlkQ291bnQ9IjEiPgoJPERldmljZSBpZFVuaXF1ZT0iMSIgaWRHcm91cD0iMSIgbmFtZT0i0JLQuNC00LXQvtGA0LXQs9C40YHRgtGA0LDRgtC+0YAiIGRvbWFpbj0iMTkyLjE2OC4xLjEzMCIgcG9ydD0iMzc3NzciIHVzZXJuYW1lPSJXUVNSYm14S2xRUXY4ZzlRVzlLakNRPT0iIHBhc3N3b3JkPSIza0dRNVluR3NOb3NGQytNY2Q4cFp3PT0iIHByb3RvY29sPSIxIiBjb25uZWN0PSIwIiAvPgo8L09yZ2FuaXphdGlvbkRldmljZT4K'
+        'Organization\OrganizationGroup.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPE9yZ2FuaXphdGlvbkdyb3VwIHZlcnNpb249IjEuMCIgaWRDb3VudD0iMSI+Cgk8R3JvdXAgaWRVbmlxdWU9IjEiIGlkR3JvdXA9Ii0xIiBuYW1lPSLQn9C+INGD0LzQvtC70YfQsNC90LjRjiIgLz4KPC9Pcmdhbml6YXRpb25Hcm91cD4K'
+        'Organization\OrganizationRegion.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPE9yZ2FuaXphdGlvblJlZ2lvbiB2ZXJzaW9uPSIxLjAiIGlkQ291bnQ9IjEiPgoJPFJlZ2lvbiBpZFVuaXF1ZT0iMSIgaWRSZWdpb249Ii0xIiBuYW1lPSLQoNC10LPQuNC+0L0g0L/QviDRg9C80L7Qu9GH0LDQvdC40Y4iIC8+CjwvT3JnYW5pemF0aW9uUmVnaW9uPgo='
+        'Organization\OrganizationChannel.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPE9yZ2FuaXphdGlvbkNoYW5uZWwgdmVyc2lvbj0iMS4wIiBpZENvdW50PSIwIiAvPgo='
+        'Organization\OrganizationEmap.xml' = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPE9yZ2FuaXphdGlvbkVtYXAgdmVyc2lvbj0iMS4wIiBpZENvdW50PSIwIiAvPgo='
     }
-}
+    # END EMBEDDED TEMPLATES
 
-function Download-File {
-    param(
-        [string]$URL,
-        [string]$OutFile,
-        [string]$Description
-    )
-    try {
-        Ensure-Directory (Split-Path $OutFile)
-        Invoke-WebRequest -Uri $URL -OutFile $OutFile -ErrorAction Stop
-        return $true
-    }
-    catch {
-        return $false
-    }
-}
+    # ========================================================================
+    # Общие функции
+    # ========================================================================
 
-function Create-Shortcut {
-    param(
-        [string]$TargetPath,
-        [string]$ShortcutPath,
-        [string]$IconPath = ""
-    )
-    try {
-        Ensure-Directory (Split-Path $ShortcutPath)
-        $WshShell = New-Object -ComObject WScript.Shell
-        $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-        $Shortcut.TargetPath = $TargetPath
-        if ($IconPath -and $IconPath -ne "") {
-            $Shortcut.IconLocation = $IconPath
-        }
-        $Shortcut.Save()
-        return $true
+    function Test-AdminRights {
+        $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+        return $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     }
-    catch {
-        return $false
-    }
-}
 
-function Remove-AllShortcuts {
-    $shortcuts = @(
-        "$DESKTOP_DIR\CMS.lnk",
-        "$DESKTOP_DIR\CMS.exe - Shortcut.lnk",
-        "$DESKTOP_DIR\КАМЕРЫ.lnk",
-        "$PUBLIC_DESKTOP\CMS.lnk",
-        "$PUBLIC_DESKTOP\CMS.exe - Shortcut.lnk",
-        "$PUBLIC_DESKTOP\КАМЕРЫ.lnk"
-    )
-    foreach ($lnk in $shortcuts) {
-        if (Test-Path $lnk) {
-            Remove-Item $lnk -Force -ErrorAction SilentlyContinue
+    function Write-Status {
+        param(
+            [string]$Icon,
+            [string]$Label,
+            [string]$Value = "",
+            [string]$Color = "Gray"
+        )
+        $line = "  $Icon  $Label"
+        if ($Value) { $line += "  $Value" }
+        Write-Host $line -ForegroundColor $Color
+    }
+
+    function Ensure-Directory {
+        param([string]$Path)
+        if (-not (Test-Path $Path)) {
+            New-Item -ItemType Directory -Path $Path -Force | Out-Null
         }
     }
-}
 
-function Reset-IconCache {
-    Add-Type -TypeDefinition @"
+    function Download-File {
+        param(
+            [string]$URL,
+            [string]$OutFile,
+            [string]$Description
+        )
+        try {
+            Ensure-Directory (Split-Path $OutFile)
+            Invoke-WebRequest -Uri $URL -OutFile $OutFile -UseBasicParsing -ErrorAction Stop
+            return $true
+        }
+        catch {
+            return $false
+        }
+    }
+
+    function Create-Shortcut {
+        param(
+            [string]$TargetPath,
+            [string]$ShortcutPath,
+            [string]$IconPath = "",
+            [string]$WorkingDirectory = ""
+        )
+        try {
+            Ensure-Directory (Split-Path $ShortcutPath)
+            $WshShell = New-Object -ComObject WScript.Shell
+            $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
+            $Shortcut.TargetPath = $TargetPath
+            if ($WorkingDirectory) { $Shortcut.WorkingDirectory = $WorkingDirectory }
+            if ($IconPath -and $IconPath -ne "") {
+                $Shortcut.IconLocation = $IconPath
+            }
+            $Shortcut.Save()
+            return $true
+        }
+        catch {
+            return $false
+        }
+    }
+
+    function Remove-AllShortcuts {
+        $shortcuts = @(
+            "C:\Users\kassir\Desktop\CMS.lnk",
+            "C:\Users\kassir\Desktop\CMS.exe - Shortcut.lnk",
+            "C:\Users\kassir\Desktop\КАМЕРЫ.lnk",
+            "C:\Users\Public\Desktop\CMS.lnk",
+            "C:\Users\Public\Desktop\CMS.exe - Shortcut.lnk",
+            "C:\Users\Public\Desktop\КАМЕРЫ.lnk"
+        )
+        foreach ($lnk in $shortcuts) {
+            if (Test-Path $lnk) {
+                Remove-Item $lnk -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    function Reset-IconCache {
+        Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public class Shell32 {
@@ -119,255 +131,930 @@ public class Shell32 {
     public static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);
 }
 "@ -ErrorAction SilentlyContinue
-    try {
-        [Shell32]::SHChangeNotify(0x08000000, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero)
-    } catch { }
-}
-
-function Copy-XMLToIntermediate {
-    param(
-        [string]$SourceFolder,
-        [string]$DestinationFolder,
-        [string[]]$FilesToCopy
-    )
-    $dataXmlFound = $false
-
-    if (-not (Test-Path $SourceFolder -PathType Container)) {
-        return $false
+        try {
+            [Shell32]::SHChangeNotify(0x08000000, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero)
+        } catch { }
     }
 
-    Ensure-Directory $DestinationFolder
+    # ========================================================================
+    # Определение регистратора
+    # ========================================================================
 
-    foreach ($file in $FilesToCopy) {
-        $sourceFile = Join-Path $SourceFolder $file
-        if (Test-Path $sourceFile) {
-            try {
-                Copy-Item -Path $sourceFile -Destination $DestinationFolder -Force -ErrorAction Stop
-                if ($file -eq "Data.xml") { $dataXmlFound = $true }
+    function Get-RecorderAddress {
+        # Windows chooses routes by route metric + interface metric.
+        $interfaces = @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction Stop)
+        $candidates = @(foreach ($route in @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop)) {
+            $interface = $interfaces | Where-Object { $_.InterfaceIndex -eq $route.InterfaceIndex -and $_.ConnectionState -eq 'Connected' } | Select-Object -First 1
+            if ($null -eq $interface -or $route.NextHop -eq '0.0.0.0') { continue }
+            [pscustomobject]@{
+                Gateway = [string]$route.NextHop
+                Metric = [long]$route.RouteMetric + [long]$interface.InterfaceMetric
             }
-            catch { }
+        })
+        if (-not $candidates.Count) { throw 'Не найден активный IPv4-шлюз.' }
+        $bestMetric = ($candidates | Measure-Object -Property Metric -Minimum).Minimum
+        $gateways = @($candidates | Where-Object Metric -eq $bestMetric | Select-Object -ExpandProperty Gateway -Unique)
+        if ($gateways.Count -ne 1) {
+            throw "Несколько равноприоритетных шлюзов: $($gateways -join ', '). Адрес регистратора неоднозначен."
+        }
+        $address = [System.Net.IPAddress]::Parse($gateways[0])
+        if ($address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+            throw 'Шлюз должен иметь IPv4-адрес.'
+        }
+        $octets = $address.GetAddressBytes()
+        $octets[3] = 130
+        [pscustomobject]@{ Gateway = $gateways[0]; Address = ($octets -join '.') }
+    }
+
+    function Test-RecorderPort {
+        param([string]$Address, [int]$Port, [int]$TimeoutMilliseconds = 1500)
+        $client = New-Object System.Net.Sockets.TcpClient
+        $pending = $null
+        try {
+            $pending = $client.BeginConnect($Address, $Port, $null, $null)
+            if (-not $pending.AsyncWaitHandle.WaitOne($TimeoutMilliseconds)) { return $false }
+            $client.EndConnect($pending)
+            return $true
+        } catch [System.Net.Sockets.SocketException] {
+            return $false
+        } finally {
+            if ($null -ne $pending) { $pending.AsyncWaitHandle.Close() }
+            $client.Close()
         }
     }
 
-    return $dataXmlFound
-}
-
-# ============================================================================
-# ШАПКА
-# ============================================================================
-
-Write-Host ""
-Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
-Write-Host "          CMS Setup" -ForegroundColor Cyan
-Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
-Write-Host ""
-
-# ============================================================================
-# ШАГ 1: Поиск и сохранение конфигурации на D:\
-# ============================================================================
-
-$configFound = $false
-$configSource = ""
-
-# Локальные пути поиска (в порядке приоритета)
-$localSearchPaths = [ordered]@{
-    "локально (Polyvision)"   = "C:\Program Files (x86)\Polyvision\CMS\XML"
-    "локально (CMS)"          = "C:\Program Files (x86)\CMS\XML"
-    "локально (VirtualStore)" = "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
-}
-
-foreach ($entry in $localSearchPaths.GetEnumerator()) {
-    if (Copy-XMLToIntermediate -SourceFolder $entry.Value -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
-        $configFound = $true
-        $configSource = $entry.Key
-        break
+    function Get-VideoSystemDetection {
+        $recorder = Get-RecorderAddress
+        # Default ports identify a candidate, not a verified device model.
+        $cmsOpen = Test-RecorderPort -Address $recorder.Address -Port 34567
+        $smartOpen = Test-RecorderPort -Address $recorder.Address -Port 37777
+        $candidate = 'Unknown'
+        $reason = 'Оба порта недоступны: регистратор выключен, недоступен или использует другие порты.'
+        if ($cmsOpen -and $smartOpen) {
+            $reason = 'Открыты оба порта. Автоматический выбор неоднозначен.'
+        } elseif ($cmsOpen) {
+            $candidate = 'CMS'; $reason = 'Доступен стандартный TCP-порт CMS.'
+        } elseif ($smartOpen) {
+            $candidate = 'SmartPSS'; $reason = 'Доступен стандартный TCP-порт Dahua.'
+        }
+        [pscustomobject]@{
+            Gateway = $recorder.Gateway; RecorderAddress = $recorder.Address
+            CMSPort34567 = $cmsOpen; SmartPSSPort37777 = $smartOpen
+            Candidate = $candidate; Reason = $reason
+        }
     }
-}
 
-# Сетевой поиск
-if (-not $configFound) {
-    $ipAddresses = Get-NetNeighbor -State Reachable,Stale,Delay,Probe -ErrorAction SilentlyContinue |
-                   Where-Object { $_.IPAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } |
-                   Select-Object -ExpandProperty IPAddress -Unique
+    # ========================================================================
+    # SmartPSS: установка
+    # ========================================================================
 
-    foreach ($ip in $ipAddresses) {
-        try {
-            $remoteSearchPaths = [ordered]@{
-                "по сети ($ip) - Polyvision"   = "\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML"
-                "по сети ($ip) - CMS"          = "\\$ip\C`$\Program Files (x86)\CMS\XML"
-                "по сети ($ip) - VirtualStore" = "\\$ip\C`$\Users\Kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
-            }
-
-            foreach ($entry in $remoteSearchPaths.GetEnumerator()) {
-                if (Copy-XMLToIntermediate -SourceFolder $entry.Value -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
-                    $configFound = $true
-                    $configSource = $entry.Key
-                    break
+    function Get-SmartPSSState {
+        $roots = @('C:\Program Files (x86)\Smart Professional Surveillance System',
+                   'C:\Program Files\Smart Professional Surveillance System')
+        $registry = @()
+        foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32,
+                            [Microsoft.Win32.RegistryView]::Registry64)) {
+            $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', $view)
+            try {
+                foreach ($product in @('SmartPSS', 'PC-NVR', 'PSS')) {
+                    $key = $base.OpenSubKey("SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$product")
+                    if ($null -eq $key) { continue }
+                    try {
+                        $directory = [string]$key.GetValue('Directory')
+                        $path = [string]$key.GetValue('Path')
+                        $registry += [pscustomobject]@{
+                            View = [string]$view; Product = $product
+                            Directory = $directory; Path = $path
+                            Installed = $key.GetValue('Installed')
+                        }
+                        if ($directory) { $roots += $directory }
+                        if ($path) { $roots += $path }
+                    } finally { $key.Dispose() }
+                }
+            } finally { $base.Dispose() }
+        }
+        $clients = @()
+        $storageFiles = @()
+        foreach ($root in @($roots | Select-Object -Unique)) {
+            foreach ($relative in @('SmartPSS\SmartPSS.exe', 'SmartPSS.exe')) {
+                $candidate = Join-Path $root $relative
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                    $clients += (Get-Item -LiteralPath $candidate).FullName
                 }
             }
-
-            if ($configFound) { break }
-        }
-        catch { }
-    }
-}
-
-if ($configFound) {
-    Write-Status "✓" "Конфигурация" "найдена $configSource" "Green"
-    Write-Status "✓" "Сохранена на" "D:\" "Cyan"
-} else {
-    Write-Status "✗" "Конфигурация" "не найдена" "Red"
-}
-
-Write-Host "  ─────────────────────────────" -ForegroundColor DarkGray
-
-# ============================================================================
-# ШАГ 2: Удаление старых папок CMS
-# ============================================================================
-
-$PATHS_TO_DELETE = @(
-    "C:\Program Files (x86)\Polyvision",
-    "C:\Program Files (x86)\CMS"
-)
-
-foreach ($folder in $PATHS_TO_DELETE) {
-    if (Test-Path $folder -PathType Container) {
-        try {
-            Remove-Item -Path $folder -Recurse -Force -ErrorAction Stop
-        }
-        catch {
-            Write-Host ""
-            Write-Status "✗" "Не удалось удалить $folder" "" "Red"
-            Write-Status "  " $_.Exception.Message "" "DarkGray"
-            Write-Host ""
-            Pause
-            exit 1
-        }
-    }
-}
-
-# ============================================================================
-# ШАГ 3: Загрузка и установка CMS
-# ============================================================================
-
-if (-not (Download-File -URL $SETUP_URL -OutFile $SETUP_FILE -Description "Setup.exe")) {
-    Write-Host ""
-    Write-Status "✗" "Не удалось скачать установщик" "" "Red"
-    Write-Host ""
-    Pause
-    exit 1
-}
-
-try {
-    $proc = Start-Process -FilePath $SETUP_FILE -ArgumentList "/SILENT" -Wait -PassThru -WindowStyle Hidden
-    if ($proc.ExitCode -ne 0) {
-        Write-Host ""
-        Write-Status "✗" "Установщик завершился с ошибкой" "код $($proc.ExitCode)" "Red"
-        Write-Host ""
-        Pause
-        exit 1
-    }
-}
-catch {
-    Write-Host ""
-    Write-Status "✗" "Ошибка запуска установщика" "" "Red"
-    Write-Host ""
-    Pause
-    exit 1
-}
-
-if (-not (Test-Path $CMS_PATH -PathType Container)) {
-    Write-Host ""
-    Write-Status "✗" "Папка CMS не найдена после установки" "" "Red"
-    Write-Host ""
-    Pause
-    exit 1
-}
-
-Ensure-Directory $XML_DIR
-
-Write-Status "✓" "CMS установлена" "" "Green"
-
-# ============================================================================
-# ШАГ 4: Применение конфигурации из D:\ в XML_DIR
-# ============================================================================
-
-$configDestinations = @(
-    "C:\Program Files (x86)\Polyvision\CMS\XML",
-    "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
-)
-
-if (Test-Path "D:\Data.xml") {
-    foreach ($dest in $configDestinations) {
-        Ensure-Directory $dest
-        foreach ($file in $FILES_TO_COPY) {
-            $intermediateFile = "D:\$file"
-            if (Test-Path $intermediateFile) {
-                Copy-Item -Path $intermediateFile -Destination $dest -Force -ErrorAction SilentlyContinue
+            $storage = Join-Path $root 'PC-NVR'
+            if (Test-Path -LiteralPath $storage -PathType Container) {
+                $storageFiles += @(Get-ChildItem -LiteralPath $storage -File -Recurse -ErrorAction Stop | Select-Object -ExpandProperty FullName)
             }
         }
+        $services = @(Get-CimInstance Win32_Service -ErrorAction Stop |
+            Where-Object { $_.PathName -match 'PC-NVR|PCNVR' -or $_.Name -match 'PC.?NVR' } |
+            Select-Object Name, PathName, StartMode, State)
+        [pscustomobject]@{
+            Clients = @($clients | Sort-Object -Unique)
+            StorageFiles = @($storageFiles | Sort-Object -Unique)
+            StorageServices = $services
+            Registry = $registry
+        }
     }
-    Write-Status "✓" "Конфигурация применена" "" "Green"
-}
 
-# ============================================================================
-# ШАГ 5: BAT-файл
-# ============================================================================
-
-$batContent = "cmd /min /C `"set __COMPAT_LAYER=RUNASINVOKER && start `"`" `"$CMS_PATH\CMS.exe`"`""
-Set-Content -Path $BAT_FILE -Value $batContent -Force
-Write-Status "✓" "BAT-файл создан" "" "Green"
-
-# ============================================================================
-# ШАГ 6: Загрузка иконки
-# ============================================================================
-
-if (Test-Path $ICON_FILE) {
-    Remove-Item $ICON_FILE -Force -ErrorAction SilentlyContinue
-}
-
-$iconExists = Download-File -URL $ICON_URL -OutFile $ICON_FILE -Description "camera.ico"
-
-# ============================================================================
-# ШАГ 7: Удаление всех ярлыков + сброс кэша иконок
-# ============================================================================
-
-Remove-AllShortcuts
-Reset-IconCache
-
-# ============================================================================
-# ШАГ 8: Создание ярлыка КАМЕРЫ
-# ============================================================================
-
-if ($iconExists -and (Test-Path $ICON_FILE)) {
-    $iconParam = "$ICON_FILE,0"
-} else {
-    $iconParam = ""
-}
-
-Create-Shortcut -TargetPath $BAT_FILE -ShortcutPath $SHORTCUT_FILE -IconPath $iconParam | Out-Null
-Write-Status "✓" "Ярлык КАМЕРЫ.lnk" "создан" "Green"
-
-# ============================================================================
-# ШАГ 9: Очистка временных файлов на D:\
-# ============================================================================
-
-foreach ($file in $FILES_TO_COPY) {
-    $tempFile = "D:\$file"
-    if (Test-Path $tempFile) {
-        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+    function Test-SmartPSSStoragePresent {
+        param([Parameter(Mandatory = $true)]$State)
+        $storageFiles = @($State.StorageFiles | Where-Object { $null -ne $_ })
+        $storageServices = @($State.StorageServices | Where-Object { $null -ne $_ })
+        if ($storageFiles.Count -gt 0 -or $storageServices.Count -gt 0) { return $true }
+        $registry = @($State.Registry | Where-Object { $null -ne $_ })
+        return @($registry | Where-Object { $_.Product -eq 'PC-NVR' -and $_.Installed -eq 1 }).Count -gt 0
     }
+
+    function Stop-SmartPSSProcesses {
+        # Only processes started from the SmartPSS installation (Challenge.exe has a generic name).
+        foreach ($process in @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+                    $_.Path -like '*\Smart Professional Surveillance System\*' -or $_.Name -in @('SmartPSS', 'PC-NVR', 'PCNVR', 'DSMessageNotify') })) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Seconds 1
+    }
+
+    function Remove-SmartPSSStorageService {
+        $ErrorActionPreference = 'Stop'
+        if (-not (Test-AdminRights)) { throw 'Удаление Storage Service требует прав администратора.' }
+        $state = Get-SmartPSSState
+        if (-not (Test-SmartPSSStoragePresent -State $state)) {
+            return [pscustomobject]@{ Removed = $false; Paths = @() }
+        }
+        Stop-SmartPSSProcesses
+        foreach ($service in @($state.StorageServices)) {
+            if ($service.State -ne 'Stopped') { Stop-Service -Name $service.Name -Force -ErrorAction Stop }
+            & sc.exe delete $service.Name | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось удалить службу Storage Service: $($service.Name)." }
+        }
+        $installRoots = @(
+            'C:\Program Files (x86)\Smart Professional Surveillance System',
+            'C:\Program Files\Smart Professional Surveillance System',
+            'C:\Users\Public'
+        )
+        $paths = @()
+        foreach ($root in $installRoots) {
+            $path = Join-Path $root 'PC-NVR'
+            if (Test-Path -LiteralPath $path -PathType Container) {
+                $item = Get-Item -LiteralPath $path -ErrorAction Stop
+                if ($item.Name -ne 'PC-NVR') { throw "Небезопасный путь удаления: $path" }
+                Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+                $paths += $item.FullName
+            }
+        }
+        foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32, [Microsoft.Win32.RegistryView]::Registry64)) {
+            $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', $view)
+            try {
+                $keyPath = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PC-NVR'
+                $key = $base.OpenSubKey($keyPath)
+                if ($null -ne $key) {
+                    $key.Dispose()
+                    $base.DeleteSubKeyTree($keyPath)
+                }
+            } finally { $base.Dispose() }
+        }
+        if (Test-SmartPSSStoragePresent -State (Get-SmartPSSState)) {
+            throw 'Storage Service удалён не полностью.'
+        }
+        [pscustomobject]@{ Removed = $true; Paths = $paths }
+    }
+
+    function Find-SmartPSSInstaller {
+        $candidates = @()
+        if ($SmartPSSInstaller) { $candidates += $SmartPSSInstaller }
+        # Pharmacies keep the installer in the root of D: or in D:\LPROG\Видеонаблюдение.
+        $searchRoots = @('D:\', 'D:\LPROG\Видеонаблюдение')
+        foreach ($root in $searchRoots) {
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+            $candidates += @(Get-ChildItem -LiteralPath $root -Filter 'DH_SmartPSS*.exe' -File -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty FullName)
+        }
+        if ($SmartPSSInstaller -and (Test-Path -LiteralPath $SmartPSSInstaller -PathType Leaf)) {
+            return (Get-Item -LiteralPath $SmartPSSInstaller).FullName
+        }
+        $found = @($candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -Unique | ForEach-Object { Get-Item -LiteralPath $_ })
+        if ($found.Count) {
+            # Any version is allowed; prefer the inspected build, otherwise the newest file.
+            $known = @($found | Where-Object { $_.Name -eq $SmartPSSInstallerName })
+            if ($known.Count) { return $known[0].FullName }
+            return ($found | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+        }
+        throw "Не найден установщик $SmartPSSInstallerName. Положите его в корень D:\ или в D:\LPROG\Видеонаблюдение и запустите снова."
+    }
+
+    function Install-SmartPSS {
+        $ErrorActionPreference = 'Stop'
+        $installer = Find-SmartPSSInstaller
+        Write-Status "•" "Установщик" $installer "Gray"
+        if ((Split-Path $installer -Leaf) -ne $SmartPSSInstallerName) {
+            Write-Status "!" "Версия установщика не проверялась" "проверьте вход, регистратор и каналы" "Yellow"
+        }
+        Stop-SmartPSSProcesses
+        # NSIS silent mode installs both selected sections; Storage Service is removed afterwards.
+        $process = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+        if ($process.ExitCode -ne 0) { throw "Установщик SmartPSS завершился с кодом $($process.ExitCode)." }
+        $deadline = (Get-Date).AddMinutes(2)
+        do {
+            $state = Get-SmartPSSState
+            if ($state.Clients.Count) { break }
+            Start-Sleep -Seconds 2
+        } while ((Get-Date) -lt $deadline)
+        if ($state.Clients.Count -ne 1) {
+            throw "После установки ожидался один SmartPSS.exe, найдено: $($state.Clients.Count)."
+        }
+        # The installer may start the client or PC-NVR after finishing.
+        Start-Sleep -Seconds 3
+        Stop-SmartPSSProcesses
+        $state.Clients[0]
+    }
+
+    # ========================================================================
+    # SmartPSS: настройка
+    # ========================================================================
+
+    function Read-SmartPSSXml {
+        param([string]$Path)
+        $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($file.PSIsContainer -or $file.Length -gt 1MB) { throw 'Неожиданный размер файла конфигурации.' }
+        $settings = New-Object Xml.XmlReaderSettings
+        $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+        $settings.XmlResolver = $null
+        $reader = $null
+        try {
+            $reader = [Xml.XmlReader]::Create($file.FullName, $settings)
+            $doc = New-Object Xml.XmlDocument
+            $doc.XmlResolver = $null
+            $doc.Load($reader)
+            return ,$doc
+        } catch { throw "Не удалось прочитать XML: $($file.Name)." }
+        finally { if ($null -ne $reader) { $reader.Dispose() } }
+    }
+
+    function Expand-SmartPSSTemplates {
+        $required = @('Login\conf.xml', 'Login\role.xml', 'Login\code.dat', 'Login\ClientConfig.xml', 'Login\loginconfig.ini',
+                      'Organization\Organization.xml', 'Organization\OrganizationDevice.xml', 'Organization\OrganizationGroup.xml',
+                      'Organization\OrganizationRegion.xml', 'Organization\OrganizationChannel.xml', 'Organization\OrganizationEmap.xml')
+        foreach ($leaf in $required) {
+            if (-not $EmbeddedTemplates.ContainsKey($leaf)) { throw "В скрипт не встроен шаблон $leaf." }
+        }
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('pk-smartpss-' + [guid]::NewGuid())
+        foreach ($leaf in $required) {
+            $path = Join-Path $root $leaf
+            [IO.Directory]::CreateDirectory((Split-Path $path)) | Out-Null
+            [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($EmbeddedTemplates[$leaf]))
+        }
+        $root
+    }
+
+    function Initialize-SmartPSSConfigDirectory {
+        param([Parameter(Mandatory = $true)][string]$Client, [Parameter(Mandatory = $true)][string]$ConfigDirectory)
+        # SmartPSS copies its defaults to Public on first start; before that only the install dir has them.
+        [IO.Directory]::CreateDirectory($ConfigDirectory) | Out-Null
+        $settings = Join-Path $ConfigDirectory 'Settings.ini'
+        if (-not (Test-Path -LiteralPath $settings -PathType Leaf)) {
+            Copy-Item -LiteralPath (Join-Path (Split-Path $Client) 'Settings.ini') -Destination $settings
+        }
+    }
+
+    function Initialize-SmartPSSLogin {
+        param([string]$TemplateDirectory, [string]$ConfigDirectory)
+        $ErrorActionPreference = 'Stop'
+        if (@(Get-Process -Name SmartPSS -ErrorAction SilentlyContinue).Count) { throw 'Закройте SmartPSS перед настройкой входа.' }
+        $files = @('conf.xml','role.xml','code.dat','ClientConfig.xml','loginconfig.ini')
+        foreach ($leaf in $files) {
+            $item = Get-Item -LiteralPath (Join-Path $TemplateDirectory $leaf)
+            if ($item.PSIsContainer -or $item.Length -eq 0 -or $item.Length -gt 1MB) { throw "Некорректный файл шаблона входа: $leaf" }
+        }
+        $source = Read-SmartPSSXml (Join-Path $TemplateDirectory 'conf.xml')
+        $users = @($source.SelectNodes('/UserInfo/Users/User'))
+        if ($source.DocumentElement.GetAttribute('version') -ne '2.0' -or $users.Count -ne 1 -or
+            $users[0].GetAttribute('name') -ne 'admin' -or [string]::IsNullOrWhiteSpace($users[0].GetAttribute('pwd')) -or
+            [string]::IsNullOrWhiteSpace($users[0].GetAttribute('Check'))) { throw 'Шаблон должен содержать настроенного локального администратора SmartPSS 2.02.' }
+        $config = Get-Item -LiteralPath $ConfigDirectory
+        $targetConf = Join-Path $config.FullName 'conf.xml'
+        if (Test-Path -LiteralPath $targetConf) {
+            $existing = Read-SmartPSSXml $targetConf
+            $existingUsers = @($existing.SelectNodes('/UserInfo/Users/User'))
+            if ($existingUsers.Count -ne 1 -or $existingUsers[0].GetAttribute('name') -ne 'admin') { throw 'Существующие локальные пользователи SmartPSS не будут заменены.' }
+            if (-not [string]::IsNullOrEmpty($existingUsers[0].GetAttribute('pwd')) -and
+                ($existingUsers[0].GetAttribute('pwd') -cne $users[0].GetAttribute('pwd') -or
+                 $existingUsers[0].GetAttribute('Check') -cne $users[0].GetAttribute('Check'))) {
+                throw 'В SmartPSS уже задан другой локальный пароль (настроен вручную). Замена отменена.'
+            }
+        }
+        $systemPath = Join-Path $config.FullName 'SystemConfig.ini'
+        $systemText = if (Test-Path -LiteralPath $systemPath) { [IO.File]::ReadAllText($systemPath) } else { '' }
+        $section = [regex]::Match($systemText, '(?ms)^\[NormalConfig\][^\S\r\n]*\r?\n.*?(?=^\[|\z)')
+        $sectionText = if ($section.Success) { $section.Value } else { "[NormalConfig]`r`n" }
+        foreach ($setting in @(@('IsAutoLoginPSS','1'), @('StartPCNVR','0'), @('FirstInstalled','0'))) {
+            $pattern = '(?m)^' + $setting[0] + '=[^\r\n]*'
+            $line = $setting[0] + '=' + $setting[1]
+            if ([regex]::IsMatch($sectionText, $pattern)) { $sectionText = [regex]::Replace($sectionText, $pattern, $line) }
+            else { $sectionText = $sectionText.TrimEnd() + "`r`n$line`r`n" }
+        }
+        if ($section.Success) { $systemText = $systemText.Remove($section.Index,$section.Length).Insert($section.Index,$sectionText) }
+        else { $systemText = $systemText.TrimEnd() + "`r`n" + $sectionText }
+        $backup = Join-Path $config.FullName ('pk-login-backup-' + [guid]::NewGuid())
+        [IO.Directory]::CreateDirectory($backup) | Out-Null
+        $writes = @()
+        foreach ($leaf in @($files + @('SystemConfig.ini','conf.xml.usertmp','role.xml.usertmp'))) {
+            $target = Join-Path $config.FullName $leaf
+            $existed = Test-Path -LiteralPath $target
+            if ($existed) { [IO.File]::Copy($target, (Join-Path $backup $leaf), $false) }
+            $staged = Join-Path $backup ($leaf + '.new')
+            if ($leaf -eq 'SystemConfig.ini') { [IO.File]::WriteAllText($staged,$systemText,(New-Object Text.UTF8Encoding($false))) }
+            else { [IO.File]::Copy((Join-Path $TemplateDirectory ($leaf -replace '\.usertmp$','')), $staged, $false) }
+            $writes += [pscustomobject]@{ Target=$target; Leaf=$leaf; Staged=$staged; Existed=$existed }
+        }
+        $attempted = @()
+        try {
+            foreach ($write in $writes) { $attempted += $write; [IO.File]::Copy($write.Staged,$write.Target,$true) }
+        } catch {
+            foreach ($write in $attempted) {
+                if ($write.Existed) { [IO.File]::Copy((Join-Path $backup $write.Leaf),$write.Target,$true) }
+                elseif (Test-Path -LiteralPath $write.Target) { Remove-Item -LiteralPath $write.Target }
+            }
+            throw "Не удалось настроить локальный вход. Резервные копии: $backup"
+        }
+        [pscustomobject]@{ AutoLogin=$true; Backup=$backup }
+    }
+
+    function Initialize-SmartPSSOrganization {
+        param([string]$TemplateDirectory, [string]$ConfigDirectory, [string]$Address, [string]$Name)
+        $ErrorActionPreference = 'Stop'
+        if (@(Get-Process -Name SmartPSS -ErrorAction SilentlyContinue).Count) {
+            throw 'Полностью закройте SmartPSS перед настройкой.'
+        }
+        $ip = $null
+        if (-not [Net.IPAddress]::TryParse($Address, [ref]$ip) -or
+            $ip.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or $ip.GetAddressBytes()[3] -ne 130) {
+            throw 'Ожидается IPv4-адрес регистратора с окончанием .130.'
+        }
+        if ([string]::IsNullOrWhiteSpace($Name)) { throw 'Имя устройства не задано.' }
+        if (-not (Test-Path -LiteralPath $ConfigDirectory -PathType Container)) {
+            throw 'Каталог настроек SmartPSS отсутствует.'
+        }
+        $names = @('Organization', 'OrganizationDevice', 'OrganizationGroup', 'OrganizationRegion', 'OrganizationChannel', 'OrganizationEmap')
+        $docs = @{}
+        foreach ($item in $names) {
+            $doc = Read-SmartPSSXml (Join-Path $TemplateDirectory "$item.xml")
+            $version = if ($item -eq 'OrganizationDevice') { '2.0' } else { '1.0' }
+            if ($doc.DocumentElement.Name -ne $item -or $doc.DocumentElement.GetAttribute('version') -ne $version) {
+                throw "Неподдерживаемый формат $item.xml."
+            }
+            $docs[$item] = $doc
+        }
+        foreach ($link in @('Device','Group','Region','Channel','Emap')) {
+            $node = $docs.Organization.SelectSingleNode("/Organization/$link")
+            if ($null -eq $node -or $node.InnerText -cne "Organization$link.xml") {
+                throw "Некорректная ссылка Organization/$link."
+            }
+        }
+        $devices = @($docs.OrganizationDevice.SelectNodes('/OrganizationDevice/Device'))
+        if ($devices.Count -ne 1) { throw 'Нужен шаблон ровно одного регистратора.' }
+        $device = $devices[0]
+        $deviceId = $device.GetAttribute('idUnique')
+        if ($deviceId -notmatch '^\d+$' -or $device.GetAttribute('port') -ne '37777' -or
+            $device.GetAttribute('protocol') -ne '1' -or $device.GetAttribute('connect') -ne '0' -or
+            [string]::IsNullOrWhiteSpace($device.GetAttribute('username')) -or
+            [string]::IsNullOrWhiteSpace($device.GetAttribute('password'))) {
+            throw 'Некорректная запись регистратора в шаблоне.'
+        }
+        $groups = @($docs.OrganizationGroup.SelectNodes('/OrganizationGroup/Group') | ForEach-Object { $_.GetAttribute('idUnique') })
+        $regions = @($docs.OrganizationRegion.SelectNodes('/OrganizationRegion/Region') | ForEach-Object { $_.GetAttribute('idUnique') })
+        if ($groups -notcontains $device.GetAttribute('idGroup')) { throw 'Группа устройства отсутствует в шаблоне.' }
+        $channels = @($docs.OrganizationChannel.SelectNodes('/OrganizationChannel/Channel'))
+        # A template captured right after import has no channels yet; they are discarded anyway.
+        foreach ($channel in $channels) {
+            if ($channel.GetAttribute('idDevice') -ne $deviceId -or $regions -notcontains $channel.GetAttribute('idRegion')) {
+                throw 'Нарушена связь каналов с устройством или регионом.'
+            }
+        }
+        # Pharmacy recorders have different channel counts: SmartPSS discovers them itself.
+        foreach ($channel in $channels) { $channel.ParentNode.RemoveChild($channel) | Out-Null }
+        $docs.OrganizationChannel.DocumentElement.SetAttribute('idCount', '0')
+        $device.SetAttribute('domain', $ip.ToString())
+        $device.SetAttribute('name', $Name)
+        $target = Join-Path $ConfigDirectory 'Organization'
+        $targetDevice = Join-Path $target 'OrganizationDevice.xml'
+        if (Test-Path -LiteralPath $targetDevice) {
+            $existing = Read-SmartPSSXml $targetDevice
+            if ($existing.DocumentElement.Name -ne 'OrganizationDevice') {
+                throw 'Неизвестная конфигурация OrganizationDevice.'
+            }
+            $existingDevices = @($existing.DocumentElement.SelectNodes('*'))
+            if ($existingDevices.Count -gt 0) {
+                # Internal credential encoding includes the device ID. Never copy it to a different ID.
+                if ($existingDevices.Count -ne 1 -or $existingDevices[0].LocalName -ne 'Device' -or
+                    $existingDevices[0].GetAttribute('domain') -ne $Address -or
+                    $existingDevices[0].GetAttribute('idUnique') -ne $deviceId -or
+                    $existingDevices[0].GetAttribute('port') -ne '37777') {
+                    throw 'В SmartPSS уже добавлены другие устройства (настроено вручную). Автоматическая перезапись отменена.'
+                }
+                $existingDevices[0].SetAttribute('username', $device.GetAttribute('username'))
+                $existingDevices[0].SetAttribute('password', $device.GetAttribute('password'))
+                $backup = "$targetDevice.pk-backup-$([guid]::NewGuid())"
+                $temporary = "$targetDevice.$([guid]::NewGuid()).tmp"
+                try {
+                    $existing.Save($temporary)
+                    [IO.File]::Replace($temporary, $targetDevice, $backup)
+                } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary } }
+                Set-SmartPSSAllChannels -ConfigDirectory $ConfigDirectory | Out-Null
+                return [pscustomobject]@{ Address = $Address; DeviceID = $deviceId; Channels = 'Preserved'; Backup = $backup }
+            }
+        } elseif (Test-Path -LiteralPath $target -PathType Container) {
+            if (@(Get-ChildItem -LiteralPath $target -Force).Count) { throw 'Неполная существующая конфигурация Organization. Перезапись отменена.' }
+        }
+        $show = New-Object Xml.XmlDocument
+        $show.LoadXml('<ShowChannl version="1.0"/>')
+        $entry = $show.CreateElement('ShowChannlInfo')
+        $entry.SetAttribute('DeviceID', $deviceId)
+        $entry.SetAttribute('ChannlMode', '6')
+        $show.DocumentElement.AppendChild($entry) | Out-Null
+        # Stage all content and back up every target before the first overwrite.
+        $backup = Join-Path $ConfigDirectory ('pk-backup-' + [guid]::NewGuid())
+        [IO.Directory]::CreateDirectory($backup) | Out-Null
+        $writes = @()
+        foreach ($item in $names) {
+            $writes += [pscustomobject]@{ File = (Join-Path $target "$item.xml"); Doc = $docs[$item]; Leaf = "$item.xml"; Existed = $false }
+        }
+        $writes += [pscustomobject]@{ File = (Join-Path $ConfigDirectory 'ShowChannl.xml'); Doc = $show; Leaf = 'ShowChannl.xml'; Existed = $false }
+        foreach ($write in $writes) {
+            $write.Existed = Test-Path -LiteralPath $write.File -PathType Leaf
+            if ($write.Existed) { [IO.File]::Copy($write.File, (Join-Path $backup $write.Leaf), $false) }
+            $settings = New-Object Xml.XmlWriterSettings
+            $settings.Encoding = New-Object Text.UTF8Encoding($false)
+            $settings.Indent = $true
+            $writer = [Xml.XmlWriter]::Create((Join-Path $backup ($write.Leaf + '.new')), $settings)
+            try { $write.Doc.Save($writer) } finally { $writer.Dispose() }
+        }
+        [IO.Directory]::CreateDirectory($target) | Out-Null
+        $attempted = @()
+        try {
+            foreach ($write in $writes) {
+                $attempted += $write
+                [IO.File]::Copy((Join-Path $backup ($write.Leaf + '.new')), $write.File, $true)
+            }
+        } catch {
+            $failure = $_
+            foreach ($write in $attempted) {
+                try {
+                    if ($write.Existed) { [IO.File]::Copy((Join-Path $backup $write.Leaf), $write.File, $true) }
+                    elseif (Test-Path -LiteralPath $write.File) { Remove-Item -LiteralPath $write.File -Force }
+                } catch { Write-Warning "Не удалось восстановить $($write.File). Копии: $backup" }
+            }
+            throw "Настройка не завершена. Резервные копии: $backup. Причина: $($failure.Exception.Message)"
+        }
+        [pscustomobject]@{ Address = $ip.ToString(); DeviceID = $deviceId; Channels = 0; Backup = $backup }
+    }
+
+    function Set-SmartPSSRussianLanguage {
+        param([string]$ConfigDirectory)
+        if (@(Get-Process -Name SmartPSS -ErrorAction SilentlyContinue).Count) {
+            throw 'Полностью закройте SmartPSS перед выбором языка.'
+        }
+        $path = Join-Path $ConfigDirectory 'Settings.ini'
+        $content = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)
+        $section = [regex]::Match($content, '(?ms)^\[Language\]\s*\r?\n(?<body>.*?)(?=^\[|\z)')
+        $russian = [regex]::Matches($section.Value, '(?m)^LanguageCode(\d+)\s*=\s*ru\s*$')
+        $current = [regex]::Matches($section.Value, '(?m)^CurrentLanguage\s*=\s*\d+[^\S\r\n]*')
+        if (-not $section.Success -or $russian.Count -ne 1 -or $current.Count -ne 1) {
+            throw 'Не удалось однозначно определить русский язык и CurrentLanguage в Settings.ini.'
+        }
+        $replacement = 'CurrentLanguage=' + $russian[0].Groups[1].Value
+        if ($current[0].Value -eq $replacement) { return }
+        $position = $section.Index + $current[0].Index
+        $updated = $content.Remove($position, $current[0].Length).Insert($position, $replacement)
+        $temporary = "$path.$([guid]::NewGuid()).tmp"
+        try {
+            [IO.File]::WriteAllText($temporary, $updated, (New-Object Text.UTF8Encoding($false)))
+            [IO.File]::Replace($temporary, $path, "$path.pk-backup-$([guid]::NewGuid())")
+        } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary } }
+    }
+
+    function Set-SmartPSSAllChannels {
+        param([Parameter(Mandatory = $true)][string]$ConfigDirectory)
+        $ErrorActionPreference = 'Stop'
+        if (@(Get-Process -Name SmartPSS -ErrorAction SilentlyContinue).Count) {
+            throw 'Полностью закройте SmartPSS: работающая программа может перезаписать настройки.'
+        }
+        $path = Join-Path $ConfigDirectory 'ShowChannl.xml'
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw 'ShowChannl.xml ещё не создан. DeviceID автоматически не угадывается.'
+        }
+        $file = Get-Item -LiteralPath $path
+        if ($file.Length -gt 1MB) { throw 'Неожиданный размер ShowChannl.xml.' }
+        # SmartPSS writes the nonstandard declaration encoding="UTF_8".
+        # Decode UTF-8 explicitly and parse as text, then save standard UTF-8.
+        $sourceBytes = [IO.File]::ReadAllBytes($file.FullName)
+        $utf8 = New-Object Text.UTF8Encoding($false, $true)
+        $reader = $null
+        $textReader = $null
+        try {
+            $source = $utf8.GetString($sourceBytes).TrimStart([char]0xFEFF)
+            $settings = New-Object Xml.XmlReaderSettings
+            $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+            $settings.XmlResolver = $null
+            $textReader = New-Object IO.StringReader($source)
+            $reader = [Xml.XmlReader]::Create($textReader, $settings)
+            $document = New-Object Xml.XmlDocument
+            $document.PreserveWhitespace = $true
+            $document.XmlResolver = $null
+            $document.Load($reader)
+        } catch {
+            throw 'Не удалось прочитать ShowChannl.xml как UTF-8 XML. Исходный файл не изменён.'
+        } finally {
+            if ($null -ne $reader) { $reader.Dispose() }
+            if ($null -ne $textReader) { $textReader.Dispose() }
+        }
+        $root = $document.DocumentElement
+        if ($root.Name -ne 'ShowChannl' -or $root.GetAttribute('version') -ne '1.0') {
+            throw 'Ожидается ShowChannl версии 1.0. Файл не изменён.'
+        }
+        $entries = @($root.SelectNodes('ShowChannlInfo'))
+        if (-not $entries.Count) { throw 'В ShowChannl.xml нет записей устройств.' }
+        foreach ($entry in $entries) {
+            if (-not $entry.HasAttribute('DeviceID') -or $entry.GetAttribute('DeviceID') -notmatch '^\d+$') {
+                throw 'Некорректный DeviceID в ShowChannl.xml. Файл не изменён.'
+            }
+        }
+        $changed = 0
+        foreach ($entry in $entries) {
+            if ($entry.GetAttribute('ChannlMode') -ne '6') {
+                $entry.SetAttribute('ChannlMode', '6')
+                $changed++
+            }
+        }
+        $backupPath = $null
+        if ($changed) {
+            $temporaryPath = $file.FullName + '.' + [guid]::NewGuid() + '.tmp'
+            $backupPath = $file.FullName + '.' + [guid]::NewGuid() + '.bak'
+            $writerSettings = New-Object Xml.XmlWriterSettings
+            $writerSettings.Encoding = $utf8
+            $writer = $null
+            try {
+                $writer = [Xml.XmlWriter]::Create($temporaryPath, $writerSettings)
+                $document.Save($writer)
+                $writer.Dispose(); $writer = $null
+                # Detect changes made while the script was reading the configuration.
+                if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($file.FullName)) -cne [Convert]::ToBase64String($sourceBytes)) {
+                    throw 'ShowChannl.xml изменился во время обработки. Повторите после закрытия SmartPSS.'
+                }
+                [IO.File]::Replace($temporaryPath, $file.FullName, $backupPath)
+            } finally {
+                if ($null -ne $writer) { $writer.Dispose() }
+                if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force }
+            }
+        }
+        [pscustomobject]@{ Path = $file.FullName; Devices = $entries.Count; Changed = $changed; Backup = $backupPath }
+    }
+
+    function Remove-PCNVRShortcuts {
+        param([string[]]$Roots)
+        if (-not $Roots) {
+            $Roots = @('C:\Users\Public\Desktop', (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'))
+            foreach ($profile in @(Get-ChildItem -LiteralPath 'C:\Users' -Directory -ErrorAction SilentlyContinue)) {
+                $Roots += (Join-Path $profile.FullName 'Desktop')
+                $Roots += (Join-Path $profile.FullName 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs')
+            }
+        }
+        $shell = New-Object -ComObject WScript.Shell
+        $removed = @()
+        foreach ($root in @($Roots | Select-Object -Unique)) {
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+            foreach ($link in @(Get-ChildItem -LiteralPath $root -Filter '*.lnk' -File -Recurse -Depth 2 -ErrorAction SilentlyContinue)) {
+                $target = try { $shell.CreateShortcut($link.FullName).TargetPath } catch { '' }
+                # PC-NVR files may already be deleted, but the link still stores the old target path.
+                if ($link.BaseName -notmatch 'PC-?NVR' -and $target -notmatch '\\PC-NVR\\') { continue }
+                Remove-Item -LiteralPath $link.FullName -Force
+                $removed += $link.FullName
+                $parent = $link.Directory
+                if ($parent.Name -match 'PC-?NVR' -and -not @(Get-ChildItem -LiteralPath $parent.FullName -Force).Count) {
+                    Remove-Item -LiteralPath $parent.FullName -Force
+                }
+            }
+        }
+        $removed
+    }
+
+    function Set-SmartPSSShortcut {
+        param([Parameter(Mandatory = $true)][string]$Client)
+        # Old CMS shortcuts (including КАМЕРЫ.lnk) would open the old video.
+        Remove-AllShortcuts
+        Remove-PCNVRShortcuts | Out-Null
+        # Earlier script versions replaced SmartPSS.lnk with a camera icon.
+        $oldIcon = Join-Path $SmartPSSConfigDirectory 'camera.ico'
+        if (Test-Path -LiteralPath $oldIcon -PathType Leaf) { Remove-Item -LiteralPath $oldIcon -Force }
+        $shortcut = 'C:\Users\Public\Desktop\SmartPSS.lnk'
+        if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
+            if (-not (Create-Shortcut -TargetPath $Client -ShortcutPath $shortcut -IconPath "$Client,0" -WorkingDirectory (Split-Path $Client))) {
+                throw 'Не удалось создать ярлык SmartPSS.'
+            }
+        }
+        Reset-IconCache
+        $shortcut
+    }
+
+    function Invoke-SmartPSSAutomaticSetup {
+        param([Parameter(Mandatory = $true)][string]$Address)
+        $ErrorActionPreference = 'Stop'
+        if (-not (Test-AdminRights)) { throw 'Нужны права администратора.' }
+        $state = Get-SmartPSSState
+        if ($state.Clients.Count -gt 1) {
+            throw "Найдено несколько SmartPSS.exe: $($state.Clients -join '; ')"
+        }
+        if ($state.Clients.Count -eq 0) {
+            Write-Status "•" "Установка SmartPSS" "1-2 минуты" "Cyan"
+            $client = Install-SmartPSS
+            Write-Status "✓" "SmartPSS установлен" "" "Green"
+        } else {
+            $client = $state.Clients[0]
+            Write-Status "✓" "SmartPSS уже установлен" "" "Green"
+        }
+        Stop-SmartPSSProcesses
+        if (Test-SmartPSSStoragePresent -State (Get-SmartPSSState)) {
+            Remove-SmartPSSStorageService | Out-Null
+            Write-Status "✓" "Storage Service удалён" "" "Green"
+        }
+        Initialize-SmartPSSConfigDirectory -Client $client -ConfigDirectory $SmartPSSConfigDirectory
+        $templates = Expand-SmartPSSTemplates
+        try {
+            Set-SmartPSSRussianLanguage -ConfigDirectory $SmartPSSConfigDirectory
+            Initialize-SmartPSSLogin -TemplateDirectory (Join-Path $templates 'Login') -ConfigDirectory $SmartPSSConfigDirectory | Out-Null
+            Write-Status "✓" "Русский язык и автовход" "" "Green"
+            $configuration = Initialize-SmartPSSOrganization -TemplateDirectory (Join-Path $templates 'Organization') -ConfigDirectory $SmartPSSConfigDirectory -Address $Address -Name $RecorderName
+            Write-Status "✓" "Регистратор добавлен" "$($configuration.Address), все каналы" "Green"
+        } finally {
+            Remove-Item -LiteralPath $templates -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Files are written by the elevated script; the pharmacy user runs SmartPSS without elevation.
+        & icacls.exe $SmartPSSConfigDirectory /grant '*S-1-5-32-545:(OI)(CI)M' /T /C /Q | Out-Null
+        $shortcut = Set-SmartPSSShortcut -Client $client
+        Write-Status "✓" "Ярлыки" "SmartPSS, без PC-NVR" "Green"
+        [pscustomobject]@{
+            Client = $client; Shortcut = $shortcut
+            Address = $configuration.Address; DeviceID = $configuration.DeviceID; Backup = $configuration.Backup
+        }
+    }
+
+    # ========================================================================
+    # CMS: прежний сценарий
+    # ========================================================================
+
+    function Copy-XMLToIntermediate {
+        param(
+            [string]$SourceFolder,
+            [string]$DestinationFolder,
+            [string[]]$FilesToCopy
+        )
+        $dataXmlFound = $false
+
+        if (-not (Test-Path $SourceFolder -PathType Container)) {
+            return $false
+        }
+
+        Ensure-Directory $DestinationFolder
+
+        foreach ($file in $FilesToCopy) {
+            $sourceFile = Join-Path $SourceFolder $file
+            if (Test-Path $sourceFile) {
+                try {
+                    Copy-Item -Path $sourceFile -Destination $DestinationFolder -Force -ErrorAction Stop
+                    if ($file -eq "Data.xml") { $dataXmlFound = $true }
+                }
+                catch { }
+            }
+        }
+
+        return $dataXmlFound
+    }
+
+    function Invoke-CMSSetup {
+        $ErrorActionPreference = 'Continue'
+
+        $CMS_PATH    = "C:\Program Files (x86)\Polyvision\CMS"
+        $SETUP_URL   = "https://github.com/aspektyoyo/pk/raw/main/Setup.exe"
+
+        $DOWNLOADS_DIR  = "C:\Users\kassir\Downloads"
+        $DESKTOP_DIR    = "C:\Users\kassir\Desktop"
+
+        $SETUP_FILE    = Join-Path $DOWNLOADS_DIR "Setup.exe"
+        $ICON_FILE     = Join-Path $DOWNLOADS_DIR "camera.ico"
+        $BAT_FILE      = Join-Path $CMS_PATH "CMS.bat"
+        $SHORTCUT_FILE = Join-Path $DESKTOP_DIR "КАМЕРЫ.lnk"
+
+        $XML_DIR       = Join-Path $CMS_PATH "XML"
+        $D_DRIVE_DEST  = "D:\"
+        $FILES_TO_COPY = @("Data.xml", "DevGroup.xml", "PlanTemplate.xml", "users.xml")
+
+        # --- ШАГ 1: Поиск и сохранение конфигурации на D:\ ---
+
+        $configFound = $false
+        $configSource = ""
+
+        $localSearchPaths = [ordered]@{
+            "локально (Polyvision)"   = "C:\Program Files (x86)\Polyvision\CMS\XML"
+            "локально (CMS)"          = "C:\Program Files (x86)\CMS\XML"
+            "локально (VirtualStore)" = "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
+        }
+
+        foreach ($entry in $localSearchPaths.GetEnumerator()) {
+            if (Copy-XMLToIntermediate -SourceFolder $entry.Value -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
+                $configFound = $true
+                $configSource = $entry.Key
+                break
+            }
+        }
+
+        if (-not $configFound) {
+            $ipAddresses = Get-NetNeighbor -State Reachable,Stale,Delay,Probe -ErrorAction SilentlyContinue |
+                           Where-Object { $_.IPAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } |
+                           Select-Object -ExpandProperty IPAddress -Unique
+
+            foreach ($ip in $ipAddresses) {
+                try {
+                    $remoteSearchPaths = [ordered]@{
+                        "по сети ($ip) - Polyvision"   = "\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML"
+                        "по сети ($ip) - CMS"          = "\\$ip\C`$\Program Files (x86)\CMS\XML"
+                        "по сети ($ip) - VirtualStore" = "\\$ip\C`$\Users\Kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
+                    }
+
+                    foreach ($entry in $remoteSearchPaths.GetEnumerator()) {
+                        if (Copy-XMLToIntermediate -SourceFolder $entry.Value -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
+                            $configFound = $true
+                            $configSource = $entry.Key
+                            break
+                        }
+                    }
+
+                    if ($configFound) { break }
+                }
+                catch { }
+            }
+        }
+
+        if ($configFound) {
+            Write-Status "✓" "Конфигурация" "найдена $configSource" "Green"
+            Write-Status "✓" "Сохранена на" "D:\" "Cyan"
+        } else {
+            Write-Status "✗" "Конфигурация" "не найдена" "Red"
+        }
+
+        Write-Host "  ─────────────────────────────" -ForegroundColor DarkGray
+
+        # --- ШАГ 2: Удаление старых папок CMS ---
+
+        foreach ($folder in @("C:\Program Files (x86)\Polyvision", "C:\Program Files (x86)\CMS")) {
+            if (Test-Path $folder -PathType Container) {
+                try {
+                    Remove-Item -Path $folder -Recurse -Force -ErrorAction Stop
+                }
+                catch {
+                    Write-Status "✗" "Не удалось удалить $folder" "" "Red"
+                    Write-Status "  " $_.Exception.Message "" "DarkGray"
+                    return
+                }
+            }
+        }
+
+        # --- ШАГ 3: Загрузка и установка CMS ---
+
+        if (-not (Download-File -URL $SETUP_URL -OutFile $SETUP_FILE -Description "Setup.exe")) {
+            Write-Status "✗" "Не удалось скачать установщик" "" "Red"
+            return
+        }
+
+        try {
+            $proc = Start-Process -FilePath $SETUP_FILE -ArgumentList "/SILENT" -Wait -PassThru -WindowStyle Hidden
+            if ($proc.ExitCode -ne 0) {
+                Write-Status "✗" "Установщик завершился с ошибкой" "код $($proc.ExitCode)" "Red"
+                return
+            }
+        }
+        catch {
+            Write-Status "✗" "Ошибка запуска установщика" "" "Red"
+            return
+        }
+
+        if (-not (Test-Path $CMS_PATH -PathType Container)) {
+            Write-Status "✗" "Папка CMS не найдена после установки" "" "Red"
+            return
+        }
+
+        Ensure-Directory $XML_DIR
+
+        Write-Status "✓" "CMS установлена" "" "Green"
+
+        # --- ШАГ 4: Применение конфигурации из D:\ в XML_DIR ---
+
+        $configDestinations = @(
+            "C:\Program Files (x86)\Polyvision\CMS\XML",
+            "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
+        )
+
+        if (Test-Path "D:\Data.xml") {
+            foreach ($dest in $configDestinations) {
+                Ensure-Directory $dest
+                foreach ($file in $FILES_TO_COPY) {
+                    $intermediateFile = "D:\$file"
+                    if (Test-Path $intermediateFile) {
+                        Copy-Item -Path $intermediateFile -Destination $dest -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            Write-Status "✓" "Конфигурация применена" "" "Green"
+        }
+
+        # --- ШАГ 5: BAT-файл ---
+
+        $batContent = "cmd /min /C `"set __COMPAT_LAYER=RUNASINVOKER && start `"`" `"$CMS_PATH\CMS.exe`"`""
+        Set-Content -Path $BAT_FILE -Value $batContent -Force
+        Write-Status "✓" "BAT-файл создан" "" "Green"
+
+        # --- ШАГ 6: Загрузка иконки ---
+
+        if (Test-Path $ICON_FILE) {
+            Remove-Item $ICON_FILE -Force -ErrorAction SilentlyContinue
+        }
+
+        $iconExists = Download-File -URL $ICON_URL -OutFile $ICON_FILE -Description "camera.ico"
+
+        # --- ШАГ 7: Удаление всех ярлыков + сброс кэша иконок ---
+
+        Remove-AllShortcuts
+        Reset-IconCache
+
+        # --- ШАГ 8: Создание ярлыка КАМЕРЫ ---
+
+        if ($iconExists -and (Test-Path $ICON_FILE)) {
+            $iconParam = "$ICON_FILE,0"
+        } else {
+            $iconParam = ""
+        }
+
+        Create-Shortcut -TargetPath $BAT_FILE -ShortcutPath $SHORTCUT_FILE -IconPath $iconParam | Out-Null
+        Write-Status "✓" "Ярлык КАМЕРЫ.lnk" "создан" "Green"
+
+        # --- ШАГ 9: Очистка временных файлов на D:\ ---
+
+        foreach ($file in $FILES_TO_COPY) {
+            $tempFile = "D:\$file"
+            if (Test-Path $tempFile) {
+                Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Write-Status "✓" "Временные файлы на D:\" "удалены" "Green"
+
+        Write-Host ""
+        Write-Host "  ✓  ЗАВЕРШЕНО" -ForegroundColor Green
+    }
+
+    # ========================================================================
+    # Запуск
+    # ========================================================================
+
+    if (-not (Test-AdminRights)) {
+        Write-Host "  Нужны права администратора: открывается окно PowerShell от администратора..." -ForegroundColor Yellow
+        Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -Command irm '$ScriptUrl' | iex"
+        return
+    }
+
+    Write-Host ""
+    Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
+    Write-Host "          Видео: установка" -ForegroundColor Cyan
+    Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
+    Write-Host ""
+
+    try {
+        $detection = Get-VideoSystemDetection
+        Write-Status "•" "Регистратор" $detection.RecorderAddress "Cyan"
+        switch ($detection.Candidate) {
+            'SmartPSS' {
+                Write-Status "✓" "Новое видео" "SmartPSS (порт 37777)" "Green"
+                Write-Host "  ─────────────────────────────" -ForegroundColor DarkGray
+                $result = Invoke-SmartPSSAutomaticSetup -Address $detection.RecorderAddress
+                # explorer.exe starts the shortcut without the script's elevation.
+                Start-Process explorer.exe -ArgumentList "`"$($result.Shortcut)`""
+                Write-Host ""
+                Write-Host "  ✓  ЗАВЕРШЕНО: SmartPSS открывается" -ForegroundColor Green
+            }
+            'CMS' {
+                Write-Status "✓" "Старое видео" "CMS (порт 34567)" "Green"
+                Write-Host "  ─────────────────────────────" -ForegroundColor DarkGray
+                Invoke-CMSSetup
+            }
+            default {
+                Write-Status "✗" "Тип видео не определён" $detection.Reason "Red"
+            }
+        }
+    } catch {
+        Write-Host ""
+        Write-Status "✗" "Ошибка" $_.Exception.Message "Red"
+    }
+
+    Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
+    Write-Host ""
+    Pause
 }
-Write-Status "✓" "Временные файлы на D:\" "удалены" "Green"
-
-# ============================================================================
-# ГОТОВО
-# ============================================================================
-
-Write-Host ""
-Write-Host "  ✓  ЗАВЕРШЕНО" -ForegroundColor Green
-Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
-Write-Host ""
-
-Pause
-exit 0
