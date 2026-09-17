@@ -5,7 +5,7 @@
 # Запуск:
 #   irm https://raw.githubusercontent.com/aspektyoyo/pk/main/cms.install.ps1 | iex
 #
-# Установщик SmartPSS (DH_SmartPSS*.exe, любая версия) должен лежать
+# Установщик SmartPSS (DH_SmartPSS*.exe, любая версия; проверена V2.02.1.R.180619) должен лежать
 # на ПК аптеки: в корне D:\ или в D:\LPROG\Видеонаблюдение. Другой путь:
 #   $env:PK_SMARTPSS_INSTALLER = 'E:\soft\DH_SmartPSS....exe'; irm ... | iex
 #
@@ -19,6 +19,22 @@
     $SmartPSSInstallerName = 'DH_SmartPSS_International_Win32_IS_V2.02.1.R.180619.exe'
     $SmartPSSInstaller = $env:PK_SMARTPSS_INSTALLER
     $RecorderName = 'Видеорегистратор'
+
+    # CMS recorder login. Passwords differ between pharmacies, so several are tried to read the
+    # channel count and to pick which credential CMS stores in Data.xml. The cipher is exactly what
+    # CMS writes for that password (DecryptStringEX inverts these; verified against a live device).
+    # vendor=0 is XM(NETIP), the protocol these recorders use (vendor=2 would be Dahua).
+    $CMSRecorderUser = 'admin'
+    $CMSRecorderVendor = '0'
+    $CMSRecorderCredentials = [ordered]@{
+        ''         = '44E4FFB1A5C504A3'
+        '23Qwerty' = '2E41A403A3D6D07944E4FFB1A5C504A3'
+    }
+    # Fallback when the recorder does not answer: most recorders have no password.
+    $CMSRecorderPasswordCipher = '44E4FFB1A5C504A3'
+    # Testing flag: $env:PK_CMS_FORCE_CREATE=1 skips the search for an existing config and always
+    # builds a fresh Data.xml, so the create-from-scratch path can be checked without deleting configs.
+    $CMSForceCreate = "$env:PK_CMS_FORCE_CREATE" -in @('1', 'true', 'yes', 'on')
 
     # Login and Organization must come from the same SmartPSS installation:
     # device credentials are encrypted differently for another local account/ID.
@@ -325,7 +341,7 @@ public class Shell32 {
         $candidates = @()
         if ($SmartPSSInstaller) { $candidates += $SmartPSSInstaller }
         # Pharmacies keep the installer in the root of D: or in D:\LPROG\Видеонаблюдение.
-        $searchRoots = @('D:\', 'D:\LPROG\Видеонаблюдение')
+        $searchRoots = @('D:\', 'D:\LPROG', 'D:\LPROG\Видеонаблюдение')
         foreach ($root in $searchRoots) {
             if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
             $candidates += @(Get-ChildItem -LiteralPath $root -Filter 'DH_SmartPSS*.exe' -File -ErrorAction SilentlyContinue |
@@ -800,35 +816,189 @@ public class Shell32 {
     }
 
     # ========================================================================
-    # CMS: прежний сценарий
+    # CMS: установка старого видео и добавление регистратора
     # ========================================================================
 
-    function Copy-XMLToIntermediate {
-        param(
-            [string]$SourceFolder,
-            [string]$DestinationFolder,
-            [string[]]$FilesToCopy
+    function Find-CMSExistingData {
+        # Reads an existing CMS config (local, then networked PCs) into memory so it survives the
+        # reinstall. Returns the Data/DevGroup documents and the source label, or $null.
+        $locals = @(
+            'C:\Program Files (x86)\Polyvision\CMS\XML',
+            'C:\Program Files (x86)\CMS\XML'
         )
-        $dataXmlFound = $false
-
-        if (-not (Test-Path $SourceFolder -PathType Container)) {
-            return $false
+        foreach ($profile in @(Get-ChildItem -LiteralPath 'C:\Users' -Directory -ErrorAction SilentlyContinue)) {
+            $locals += (Join-Path $profile.FullName 'AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML')
         }
-
-        Ensure-Directory $DestinationFolder
-
-        foreach ($file in $FilesToCopy) {
-            $sourceFile = Join-Path $SourceFolder $file
-            if (Test-Path $sourceFile) {
-                try {
-                    Copy-Item -Path $sourceFile -Destination $DestinationFolder -Force -ErrorAction Stop
-                    if ($file -eq "Data.xml") { $dataXmlFound = $true }
-                }
-                catch { }
+        $sources = foreach ($dir in $locals) { [pscustomobject]@{ Label = "локально ($dir)"; Dir = $dir } }
+        $neighbors = @(Get-NetNeighbor -State Reachable, Stale, Delay, Probe -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } |
+            Select-Object -ExpandProperty IPAddress -Unique)
+        foreach ($ip in $neighbors) {
+            foreach ($share in @("\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML", "\\$ip\C`$\Program Files (x86)\CMS\XML")) {
+                $sources = @($sources) + [pscustomobject]@{ Label = "по сети ($ip)"; Dir = $share }
             }
         }
+        foreach ($source in $sources) {
+            $dataPath = Join-Path $source.Dir 'Data.xml'
+            if (-not (Test-Path -LiteralPath $dataPath -PathType Leaf)) { continue }
+            try {
+                $data = New-Object Xml.XmlDocument
+                $data.Load($dataPath)
+                if ($data.DocumentElement.Name -ne 'DATAROOT' -or -not @($data.SelectNodes('/DATAROOT/DEVINFO/DEV')).Count) { continue }
+            } catch { continue }
+            $devgroup = $null
+            $groupPath = Join-Path $source.Dir 'DevGroup.xml'
+            if (Test-Path -LiteralPath $groupPath -PathType Leaf) {
+                try { $devgroup = New-Object Xml.XmlDocument; $devgroup.Load($groupPath) } catch { $devgroup = $null }
+            }
+            return [pscustomobject]@{ Source = $source.Label; Data = $data; DevGroup = $devgroup }
+        }
+        $null
+    }
 
-        return $dataXmlFound
+    function Set-CMSConfigAddress {
+        param([Parameter(Mandatory = $true)][xml]$Data, [Parameter(Mandatory = $true)][string]$Address)
+        $devices = @($Data.SelectNodes('/DATAROOT/DEVINFO/DEV'))
+        if (-not $devices.Count) { throw 'В найденной конфигурации CMS нет регистратора.' }
+        foreach ($device in $devices) { $device.SetAttribute('host', $Address) }
+    }
+
+    function Get-SofiaHash {
+        param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
+        $md5 = [Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))
+        $chars = for ($i = 0; $i -lt 8; $i++) {
+            $n = ($md5[2 * $i] + $md5[2 * $i + 1]) % 62
+            if ($n -lt 10) { [char](48 + $n) } elseif ($n -lt 36) { [char](55 + $n) } else { [char](61 + $n) }
+        }
+        -join $chars
+    }
+
+    function Invoke-CMSDvripLogin {
+        param([string]$Address, [string]$User, [string]$Hash)
+        # DVRIP-Web login; returns the parsed answer object or $null. Never throws.
+        $tcp = New-Object Net.Sockets.TcpClient
+        try {
+            if (-not $tcp.ConnectAsync($Address, 34567).Wait(3000)) { return $null }
+            $body = [Text.Encoding]::ASCII.GetBytes((@{ EncryptType = 'MD5'; LoginType = 'DVRIP-Web'; PassWord = $Hash; UserName = $User } | ConvertTo-Json -Compress) + "`n") + [byte[]](0)
+            $header = New-Object byte[] 20
+            $header[0] = 0xFF
+            [BitConverter]::GetBytes([uint16]1000).CopyTo($header, 14)
+            [BitConverter]::GetBytes([uint32]$body.Length).CopyTo($header, 16)
+            $stream = $tcp.GetStream(); $stream.ReadTimeout = 5000
+            $stream.Write($header, 0, 20); $stream.Write($body, 0, $body.Length)
+            $head = New-Object byte[] 20; $read = 0
+            while ($read -lt 20) { $r = $stream.Read($head, $read, 20 - $read); if ($r -le 0) { return $null }; $read += $r }
+            $length = [BitConverter]::ToUInt32($head, 16)
+            if ($length -eq 0 -or $length -gt 65536) { return $null }
+            $data = New-Object byte[] $length; $read = 0
+            while ($read -lt $length) { $r = $stream.Read($data, $read, $length - $read); if ($r -le 0) { break }; $read += $r }
+            return ([Text.Encoding]::ASCII.GetString($data, 0, $read).Trim([char]0, [char]10, [char]13, ' ') | ConvertFrom-Json)
+        } catch { return $null }
+        finally { $tcp.Close() }
+    }
+
+    function Get-CMSRecorderInfo {
+        param([Parameter(Mandatory = $true)][string]$Address)
+        # Tries the known recorder passwords; on the first that logs in, returns the channel count
+        # and the matching Data.xml password cipher. Recorder passwords differ between pharmacies.
+        foreach ($password in $CMSRecorderCredentials.Keys) {
+            $answer = Invoke-CMSDvripLogin -Address $Address -User $CMSRecorderUser -Hash (Get-SofiaHash $password)
+            if ($null -ne $answer -and [int]$answer.Ret -eq 100) {
+                $channels = [int]$answer.ChannelNum
+                if ($channels -ge 1 -and $channels -le 64) {
+                    return [pscustomobject]@{ Channels = $channels; Cipher = $CMSRecorderCredentials[$password] }
+                }
+            }
+        }
+        $null
+    }
+
+    function New-CMSDataXml {
+        param(
+            [Parameter(Mandatory = $true)][string]$Address,
+            [Parameter(Mandatory = $true)][int]$Channels,
+            [string]$PasswordCipher = $CMSRecorderPasswordCipher
+        )
+        if ($Channels -lt 1 -or $Channels -gt 64) { throw "Недопустимое число каналов: $Channels." }
+        $doc = New-Object Xml.XmlDocument
+        $doc.AppendChild($doc.CreateXmlDeclaration('1.0', 'UTF-8', $null)) | Out-Null
+        $root = $doc.AppendChild($doc.CreateElement('DATAROOT'))
+        $devinfo = $root.AppendChild($doc.CreateElement('DEVINFO'))
+        $dev = $devinfo.AppendChild($doc.CreateElement('DEV'))
+        $attributes = [ordered]@{
+            id = '1'; ip = '1'; area = 'apt'; name = $Address; host = $Address; port = '34567'; port2 = '0'
+            cameras = [string]$Channels; devcType = '1'; alarmcameras = '0'; ddnsFlag = '0'; DDNSHost = ''; pos = '0'
+            desc = ''; username = $CMSRecorderUser; OrgId = '1'; vendor = $CMSRecorderVendor; SerialID = ''; 'link-mode' = '0'
+            arspstatus = '0'; password = $PasswordCipher
+        }
+        foreach ($pair in $attributes.GetEnumerator()) { $dev.SetAttribute($pair.Key, $pair.Value) }
+        for ($channel = 0; $channel -lt $Channels; $channel++) {
+            $child = $dev.AppendChild($doc.CreateElement('DEV'))
+            $child.SetAttribute('id', [string]($channel + 2))
+            $child.SetAttribute('type', '0')
+            # Latin placeholder; CMS replaces it with the recorder's real channel name once online.
+            $child.SetAttribute('name', "CAM $($channel + 1)")
+            $child.SetAttribute('channel', [string]$channel)
+            $child.SetAttribute('desc', '')
+        }
+        $root.AppendChild($doc.CreateElement('IMGINFO')) | Out-Null
+        $root.AppendChild($doc.CreateElement('MAPINFO')) | Out-Null
+        $global = $root.AppendChild($doc.CreateElement('GLOBAL'))
+        $global.SetAttribute('index', [string]($Channels + 2))
+        $doc
+    }
+
+    function New-CMSDevGroupXml {
+        $doc = New-Object Xml.XmlDocument
+        $doc.AppendChild($doc.CreateXmlDeclaration('1.0', 'UTF-8', $null)) | Out-Null
+        $root = $doc.AppendChild($doc.CreateElement('DEVGROUP'))
+        $group = $root.AppendChild($doc.CreateElement('GROUP'))
+        $group.SetAttribute('name', 'apt'); $group.SetAttribute('groupID', '1'); $group.SetAttribute('parentID', '0')
+        $device = $group.AppendChild($doc.CreateElement('DEVICE')); $device.SetAttribute('devID', '1')
+        ($root.AppendChild($doc.CreateElement('GLOBAL'))).SetAttribute('index', '2')
+        ($root.AppendChild($doc.CreateElement('VERSION'))).SetAttribute('version', '1')
+        $doc
+    }
+
+    function Get-CMSXmlDirectories {
+        # Real install XML dirs where the elevated script writes, plus every user's VirtualStore
+        # shadow of them. CMS runs non-elevated and reads the VirtualStore shadow when it exists,
+        # so both must carry our config for CMS to pick it up.
+        $installs = @('C:\Program Files (x86)\Polyvision\CMS\XML', 'C:\Program Files (x86)\CMS\XML')
+        $dirs = @($installs)
+        foreach ($profile in @(Get-ChildItem -LiteralPath 'C:\Users' -Directory -ErrorAction SilentlyContinue)) {
+            foreach ($install in $installs) {
+                $relative = $install -replace '^[A-Za-z]:\\', ''
+                $dirs += Join-Path $profile.FullName ("AppData\Local\VirtualStore\$relative")
+            }
+        }
+        @($dirs | Select-Object -Unique)
+    }
+
+    function Write-CMSConfig {
+        param([Parameter(Mandatory = $true)][xml]$Data, [xml]$DevGroup, [Parameter(Mandatory = $true)][string[]]$Destinations)
+        $written = @()
+        foreach ($dir in $Destinations) {
+            # Write only where CMS is actually installed (real dir), or where a VirtualStore shadow
+            # already exists; do not create CMS folders under an install path that has none.
+            $parent = Split-Path $dir
+            if (-not (Test-Path -LiteralPath $dir -PathType Container) -and -not (Test-Path -LiteralPath $parent -PathType Container)) { continue }
+            Ensure-Directory $dir
+            foreach ($pair in @(@('Data.xml', $Data), @('DevGroup.xml', $DevGroup))) {
+                if ($null -eq $pair[1]) { continue }
+                $path = Join-Path $dir $pair[0]
+                if (Test-Path -LiteralPath $path -PathType Leaf) {
+                    Copy-Item -LiteralPath $path -Destination "$path.pk-backup-$([guid]::NewGuid())" -Force -ErrorAction SilentlyContinue
+                }
+                $settings = New-Object Xml.XmlWriterSettings
+                $settings.Encoding = New-Object Text.UTF8Encoding($false)
+                $settings.Indent = $true
+                $writer = [Xml.XmlWriter]::Create($path, $settings)
+                try { $pair[1].Save($writer) } finally { $writer.Dispose() }
+            }
+            $written += $dir
+        }
+        @($written | Select-Object -Unique)
     }
 
     function Invoke-CMSSetup {
@@ -846,65 +1016,27 @@ public class Shell32 {
         $SHORTCUT_FILE = Join-Path $DESKTOP_DIR "КАМЕРЫ.lnk"
 
         $XML_DIR       = Join-Path $CMS_PATH "XML"
-        $D_DRIVE_DEST  = "D:\"
-        $FILES_TO_COPY = @("Data.xml", "DevGroup.xml", "PlanTemplate.xml", "users.xml")
+        # Real install dirs and their VirtualStore shadows (CMS runs non-elevated, reads the shadow).
+        $configDestinations = Get-CMSXmlDirectories
 
-        # --- ШАГ 1: Поиск и сохранение конфигурации на D:\ ---
+        # --- ШАГ 1: Адрес регистратора ---
 
-        $configFound = $false
-        $configSource = ""
+        $recorder = Get-RecorderAddress
 
-        $localSearchPaths = [ordered]@{
-            "локально (Polyvision)"   = "C:\Program Files (x86)\Polyvision\CMS\XML"
-            "локально (CMS)"          = "C:\Program Files (x86)\CMS\XML"
-            "локально (VirtualStore)" = "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
-        }
+        # --- ШАГ 2: Поиск готовой конфигурации CMS (в память, до переустановки) ---
 
-        foreach ($entry in $localSearchPaths.GetEnumerator()) {
-            if (Copy-XMLToIntermediate -SourceFolder $entry.Value -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
-                $configFound = $true
-                $configSource = $entry.Key
-                break
-            }
-        }
-
-        if (-not $configFound) {
-            $ipAddresses = Get-NetNeighbor -State Reachable,Stale,Delay,Probe -ErrorAction SilentlyContinue |
-                           Where-Object { $_.IPAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' } |
-                           Select-Object -ExpandProperty IPAddress -Unique
-
-            foreach ($ip in $ipAddresses) {
-                try {
-                    $remoteSearchPaths = [ordered]@{
-                        "по сети ($ip) - Polyvision"   = "\\$ip\C`$\Program Files (x86)\Polyvision\CMS\XML"
-                        "по сети ($ip) - CMS"          = "\\$ip\C`$\Program Files (x86)\CMS\XML"
-                        "по сети ($ip) - VirtualStore" = "\\$ip\C`$\Users\Kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
-                    }
-
-                    foreach ($entry in $remoteSearchPaths.GetEnumerator()) {
-                        if (Copy-XMLToIntermediate -SourceFolder $entry.Value -DestinationFolder $D_DRIVE_DEST -FilesToCopy $FILES_TO_COPY) {
-                            $configFound = $true
-                            $configSource = $entry.Key
-                            break
-                        }
-                    }
-
-                    if ($configFound) { break }
-                }
-                catch { }
-            }
-        }
-
-        if ($configFound) {
-            Write-Status "✓" "Конфигурация" "найдена $configSource" "Green"
-            Write-Status "✓" "Сохранена на" "D:\" "Cyan"
+        if ($CMSForceCreate) {
+            $existing = $null
+            Write-Status "•" "Поиск настройки пропущен" "PK_CMS_FORCE_CREATE, создаётся заново" "Yellow"
+        } elseif ($existing = Find-CMSExistingData) {
+            Write-Status "✓" "Конфигурация" "найдена $($existing.Source)" "Green"
         } else {
-            Write-Status "✗" "Конфигурация" "не найдена" "Red"
+            Write-Status "•" "Конфигурация" "не найдена, будет создана" "Gray"
         }
 
         Write-Host "  ─────────────────────────────" -ForegroundColor DarkGray
 
-        # --- ШАГ 2: Удаление старых папок CMS ---
+        # --- ШАГ 3: Удаление старых папок CMS ---
 
         foreach ($folder in @("C:\Program Files (x86)\Polyvision", "C:\Program Files (x86)\CMS")) {
             if (Test-Path $folder -PathType Container) {
@@ -919,7 +1051,7 @@ public class Shell32 {
             }
         }
 
-        # --- ШАГ 3: Загрузка и установка CMS ---
+        # --- ШАГ 4: Загрузка и установка CMS ---
 
         if (-not (Download-File -URL $SETUP_URL -OutFile $SETUP_FILE -Description "Setup.exe")) {
             Write-Status "✗" "Не удалось скачать установщик" "" "Red"
@@ -947,33 +1079,38 @@ public class Shell32 {
 
         Write-Status "✓" "CMS установлена" "" "Green"
 
-        # --- ШАГ 4: Применение конфигурации из D:\ в XML_DIR ---
+        # --- ШАГ 5: Конфигурация регистратора (.130) ---
 
-        $configDestinations = @(
-            "C:\Program Files (x86)\Polyvision\CMS\XML",
-            "C:\Users\kassir\AppData\Local\VirtualStore\Program Files (x86)\Polyvision\CMS\XML"
-        )
-
-        if (Test-Path "D:\Data.xml") {
-            foreach ($dest in $configDestinations) {
-                Ensure-Directory $dest
-                foreach ($file in $FILES_TO_COPY) {
-                    $intermediateFile = "D:\$file"
-                    if (Test-Path $intermediateFile) {
-                        Copy-Item -Path $intermediateFile -Destination $dest -Force -ErrorAction SilentlyContinue
-                    }
-                }
+        if ($existing) {
+            Set-CMSConfigAddress -Data $existing.Data -Address $recorder.Address
+            $devgroup = $existing.DevGroup
+            $cameras = @($existing.Data.SelectNodes('/DATAROOT/DEVINFO/DEV[1]/DEV')).Count
+            Write-CMSConfig -Data $existing.Data -DevGroup $devgroup -Destinations $configDestinations
+            Write-Status "✓" "Регистратор" "$($recorder.Address), каналов $cameras (из старой настройки)" "Green"
+        } else {
+            $info = Get-CMSRecorderInfo -Address $recorder.Address
+            if ($info) {
+                $channels = $info.Channels
+                $cipher = $info.Cipher
+                Write-Status "✓" "Каналов на регистраторе" $channels "Green"
+            } else {
+                $channels = 16
+                $cipher = $CMSRecorderPasswordCipher
+                Write-Status "!" "Регистратор не ответил" "ставлю $channels каналов, стандартный пароль" "Yellow"
             }
-            Write-Status "✓" "Конфигурация применена" "" "Green"
+            $data = New-CMSDataXml -Address $recorder.Address -Channels $channels -PasswordCipher $cipher
+            $devgroup = New-CMSDevGroupXml
+            Write-CMSConfig -Data $data -DevGroup $devgroup -Destinations $configDestinations
+            Write-Status "✓" "Регистратор" "$($recorder.Address), каналов $channels (создано)" "Green"
         }
 
-        # --- ШАГ 5: BAT-файл ---
+        # --- ШАГ 6: BAT-файл ---
 
         $batContent = "cmd /min /C `"set __COMPAT_LAYER=RUNASINVOKER && start `"`" `"$CMS_PATH\CMS.exe`"`""
         Set-Content -Path $BAT_FILE -Value $batContent -Force
         Write-Status "✓" "BAT-файл создан" "" "Green"
 
-        # --- ШАГ 6: Загрузка иконки ---
+        # --- ШАГ 7: Загрузка иконки ---
 
         if (Test-Path $ICON_FILE) {
             Remove-Item $ICON_FILE -Force -ErrorAction SilentlyContinue
@@ -981,12 +1118,12 @@ public class Shell32 {
 
         $iconExists = Download-File -URL $ICON_URL -OutFile $ICON_FILE -Description "camera.ico"
 
-        # --- ШАГ 7: Удаление всех ярлыков + сброс кэша иконок ---
+        # --- ШАГ 8: Удаление всех ярлыков + сброс кэша иконок ---
 
         Remove-AllShortcuts
         Reset-IconCache
 
-        # --- ШАГ 8: Создание ярлыка КАМЕРЫ ---
+        # --- ШАГ 9: Создание ярлыка КАМЕРЫ ---
 
         if ($iconExists -and (Test-Path $ICON_FILE)) {
             $iconParam = "$ICON_FILE,0"
@@ -996,16 +1133,6 @@ public class Shell32 {
 
         Create-Shortcut -TargetPath $BAT_FILE -ShortcutPath $SHORTCUT_FILE -IconPath $iconParam | Out-Null
         Write-Status "✓" "Ярлык КАМЕРЫ.lnk" "создан" "Green"
-
-        # --- ШАГ 9: Очистка временных файлов на D:\ ---
-
-        foreach ($file in $FILES_TO_COPY) {
-            $tempFile = "D:\$file"
-            if (Test-Path $tempFile) {
-                Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
-            }
-        }
-        Write-Status "✓" "Временные файлы на D:\" "удалены" "Green"
 
         Write-Host ""
         Write-Host "  ✓  ЗАВЕРШЕНО" -ForegroundColor Green
